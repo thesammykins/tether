@@ -58,18 +58,19 @@ Discord Bot  →  BullMQ Queue  →  Claude Spawner
 ## Quick Start
 
 ```bash
-# Install dependencies
+# Clone and install
+git clone https://github.com/alexknowshtml/cord.git
+cd cord
 bun install
 
-# Set environment variables
-export DISCORD_BOT_TOKEN="your-bot-token"
+# Run setup wizard (configures .env, checks dependencies, installs skill)
+cord setup
 
 # Start Redis (if not already running)
 redis-server &
 
-# Start the bot and worker
-bun run src/bot.ts &
-bun run src/worker.ts
+# Start Cord
+cord start
 ```
 
 ## Environment Variables
@@ -132,14 +133,15 @@ See [skills/cord/PRIMITIVES.md](./skills/cord/PRIMITIVES.md) for full API docume
 
 ## Claude Code Skill
 
-Cord includes a Claude Code skill that teaches Claude how to use the HTTP API:
+Cord includes a Claude Code skill that teaches your assistant how to send Discord messages, embeds, files, and interactive buttons.
 
 ```bash
-# Copy to your Claude Code skills folder
+# Installed automatically during setup
+cord setup
+
+# Or copy manually
 cp -r skills/cord ~/.claude/skills/
 ```
-
-Once installed, Claude Code automatically knows how to send Discord messages, embeds, and buttons when you ask.
 
 See [skills/cord/SKILL.md](./skills/cord/SKILL.md) for skill documentation.
 
