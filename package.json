@@ -1,0 +1,17 @@
+{
+  "name": "cord",
+  "module": "index.ts",
+  "type": "module",
+  "private": true,
+  "devDependencies": {
+    "@types/bun": "latest"
+  },
+  "peerDependencies": {
+    "typescript": "^5"
+  },
+  "dependencies": {
+    "bullmq": "^5.67.1",
+    "discord.js": "^14.25.1",
+    "ioredis": "^5.9.2"
+  }
+}
