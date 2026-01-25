@@ -4,6 +4,16 @@ A simple bridge that connects Discord to Claude Code CLI.
 
 > **cord** /kôrd/ — a connection between two things.
 
+[![npm version](https://badge.fury.io/js/cord-bot.svg)](https://www.npmjs.com/package/cord-bot)
+
+## Install
+
+```bash
+npm install cord-bot
+# or
+bunx cord-bot
+```
+
 When someone @mentions your bot, it:
 1. Creates a thread for the conversation
 2. Queues the message for Claude processing
