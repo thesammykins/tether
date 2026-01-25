@@ -10,7 +10,7 @@ A Discord bot that connects to Claude Code CLI, plus a Claude Code skill that le
 
 **Discord Bot** — @mention the bot in Discord, it spawns Claude Code to respond. Conversations happen in threads with full context preserved across messages.
 
-**Claude Code Skill** — Teaches your assistant how to send Discord messages, embeds, files, and interactive buttons. Installed automatically during setup.
+**Claude Code Skill** — Teaches your assistant to use the bot to send messages, embeds, files, and interactive buttons. Installed automatically during setup. No MCP server needed.
 
 ## Quick Start
 
