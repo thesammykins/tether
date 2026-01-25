@@ -1,8 +1,17 @@
 {
   "name": "cord",
+  "version": "0.1.0",
   "module": "index.ts",
   "type": "module",
-  "private": true,
+  "bin": {
+    "cord": "./bin/cord.ts"
+  },
+  "scripts": {
+    "start": "bun run bin/cord.ts start",
+    "bot": "bun run src/bot.ts",
+    "worker": "bun run src/worker.ts",
+    "setup": "bun run bin/cord.ts setup"
+  },
   "devDependencies": {
     "@types/bun": "latest"
   },
