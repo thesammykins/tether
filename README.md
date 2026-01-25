@@ -6,12 +6,18 @@ A simple bridge that connects Discord to Claude Code CLI.
 
 [![npm version](https://badge.fury.io/js/cord-bot.svg)](https://www.npmjs.com/package/cord-bot)
 
-## Install
+## Quick Start
 
 ```bash
-npm install cord-bot
-# or
-bunx cord-bot
+# Create a new Cord project
+bunx create-cord my-bot
+cd my-bot
+
+# Start Redis (if not already running)
+redis-server &
+
+# Start Cord
+cord start
 ```
 
 When someone @mentions your bot, it:
@@ -19,6 +25,18 @@ When someone @mentions your bot, it:
 2. Queues the message for Claude processing
 3. Posts Claude's response back to the thread
 4. Remembers context for follow-up messages
+
+<details>
+<summary>Alternative: Clone from GitHub</summary>
+
+```bash
+git clone https://github.com/alexknowshtml/cord.git my-bot
+cd my-bot
+bun install
+cord setup
+cord start
+```
+</details>
 
 ## Architecture
 
@@ -54,24 +72,6 @@ Discord Bot  →  BullMQ Queue  →  Claude Spawner
 7. Copy the generated URL → Open in browser → Invite bot to your server
 
 **Note:** This runs 100% locally. The bot connects *outbound* to Discord's gateway - no need to expose ports or use ngrok.
-
-## Quick Start
-
-```bash
-# Clone and install
-git clone https://github.com/alexknowshtml/cord.git
-cd cord
-bun install
-
-# Run setup wizard (configures .env, checks dependencies, installs skill)
-cord setup
-
-# Start Redis (if not already running)
-redis-server &
-
-# Start Cord
-cord start
-```
 
 ## Environment Variables
 
@@ -133,15 +133,7 @@ See [skills/cord/PRIMITIVES.md](./skills/cord/PRIMITIVES.md) for full API docume
 
 ## Claude Code Skill
 
-Cord includes a Claude Code skill that teaches your assistant how to send Discord messages, embeds, files, and interactive buttons.
-
-```bash
-# Installed automatically during setup
-cord setup
-
-# Or copy manually
-cp -r skills/cord ~/.claude/skills/
-```
+Cord includes a Claude Code skill that teaches your assistant how to send Discord messages, embeds, files, and interactive buttons. It's installed automatically during setup.
 
 See [skills/cord/SKILL.md](./skills/cord/SKILL.md) for skill documentation.
 
