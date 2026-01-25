@@ -83,7 +83,10 @@ async function setup() {
     const sourceSkillsDir = join(cordRoot, 'skills', 'cord');
 
     if (existsSync(sourceSkillsDir)) {
-        const installSkill = await prompt('Install Claude Code skill? (Y/n): ');
+        console.log('\n📚 Claude Code Skill');
+        console.log('   The Cord skill teaches Claude Code how to send Discord messages,');
+        console.log('   embeds, file attachments, and interactive buttons via the HTTP API.');
+        const installSkill = await prompt('Install skill? (Y/n): ');
         if (installSkill.toLowerCase() !== 'n') {
             mkdirSync(skillsDir, { recursive: true });
             cpSync(sourceSkillsDir, skillsDir, { recursive: true });
