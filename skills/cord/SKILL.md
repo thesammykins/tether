@@ -340,6 +340,16 @@ cord buttons 123456789 "Delete all archived items older than 30 days?" \
 
 ---
 
+## Auto-Complete Behavior
+
+When a user adds a ✅ reaction to the **last message** in a thread, Cord automatically:
+1. Detects the reaction
+2. Updates the thread starter message to "✅ Done"
+
+This provides a quick way for users to signal "conversation complete" without explicit commands.
+
+---
+
 ## HTTP API
 
 For advanced use cases (webhooks, external scripts), see [HTTP-API.md](./HTTP-API.md).

@@ -29,6 +29,7 @@ const client = new Client({
         GatewayIntentBits.Guilds,
         GatewayIntentBits.GuildMessages,
         GatewayIntentBits.MessageContent,
+        GatewayIntentBits.GuildMessageReactions,
     ],
 });
 
@@ -174,6 +175,49 @@ client.on(Events.MessageCreate, async (message: Message) => {
         userId: message.author.id,
         username: message.author.tag,
     });
+});
+
+// =========================================================================
+// REACTION HANDLER: ✅ on last message marks thread as done
+// =========================================================================
+client.on(Events.MessageReactionAdd, async (reaction, user) => {
+    // Ignore bot reactions
+    if (user.bot) return;
+
+    // Only handle ✅ reactions
+    if (reaction.emoji.name !== '✅') return;
+
+    // Only handle reactions in threads
+    const channel = reaction.message.channel;
+    if (!channel.isThread()) return;
+
+    try {
+        const thread = channel;
+        const parentChannelId = thread.parentId;
+        if (!parentChannelId) return;
+
+        // Check if this is the last message in the thread
+        const messages = await thread.messages.fetch({ limit: 1 });
+        const lastMessage = messages.first();
+
+        if (!lastMessage || lastMessage.id !== reaction.message.id) {
+            // Reaction is not on the last message, ignore
+            return;
+        }
+
+        log(`✅ reaction on last message in thread ${thread.id}`);
+
+        // Update thread starter message to "Done"
+        // The thread ID equals the starter message ID (thread was created from that message)
+        const parentChannel = await client.channels.fetch(parentChannelId);
+        if (parentChannel?.isTextBased()) {
+            const starterMessage = await (parentChannel as TextChannel).messages.fetch(thread.id);
+            await starterMessage.edit('✅ Done');
+            log(`Thread ${thread.id} marked as Done`);
+        }
+    } catch (error) {
+        log(`Failed to mark thread done: ${error}`);
+    }
 });
 
 // Start the bot
