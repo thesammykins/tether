@@ -30,5 +30,17 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 # IntelliJ based IDEs
 .idea
 
+# VS Code
+.vscode
+
 # Finder (MacOS) folder config
 .DS_Store
+
+# Data directory (SQLite, etc)
+data/
+
+# Lockfiles (users should generate their own)
+bun.lock
+
+# PID file
+.cord.pid
