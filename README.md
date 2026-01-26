@@ -55,7 +55,7 @@ cord start
 5. Click **Reset Token** → Copy the token (this is your `DISCORD_BOT_TOKEN`)
 6. Go to **OAuth2** → **URL Generator**:
    - Scopes: `bot`
-   - Bot Permissions: `Send Messages`, `Create Public Threads`, `Send Messages in Threads`, `Read Message History`
+   - Bot Permissions: `Send Messages`, `Create Public Threads`, `Send Messages in Threads`, `Read Message History`, `Add Reactions`
 7. Copy the generated URL → Open in browser → Invite bot to your server
 
 **Note:** This runs 100% locally. The bot connects *outbound* to Discord's gateway - no need to expose ports or use ngrok.
@@ -99,9 +99,15 @@ cord reply <channel> <msgId> "reply"    # Reply to message
 cord react <channel> <msgId> "emoji"    # Add reaction
 cord thread <channel> <msgId> "name"    # Create thread
 cord rename <threadId> "new name"       # Rename thread
+cord state <channel> <msgId> done       # Update status (processing, done, error, etc.)
+cord health                             # Check bot connection status
 ```
 
 See [skills/cord/SKILL.md](./skills/cord/SKILL.md) for full CLI documentation.
+
+## Auto-Complete Threads
+
+When a user adds a ✅ reaction to the **last message** in a thread, Cord automatically updates the thread starter to "✅ Done". This provides a quick way to signal "conversation complete" without explicit commands.
 
 ## HTTP API
 

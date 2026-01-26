@@ -6,6 +6,7 @@
  *   cord start   - Start bot and worker
  *   cord stop    - Stop all processes
  *   cord status  - Show running status
+ *   cord health  - Check Discord connection
  *   cord setup   - Interactive setup wizard
  *
  * Discord Commands:
@@ -580,6 +581,26 @@ function isProcessRunning(pid: number): boolean {
     }
 }
 
+async function health() {
+    try {
+        const response = await fetch(`${API_BASE}/health`);
+        const data = await response.json() as { status: string; connected: boolean; user: string };
+
+        if (data.connected) {
+            console.log(`✓ Connected as ${data.user}`);
+        } else {
+            console.log('✗ Bot not connected to Discord');
+        }
+    } catch (error: any) {
+        if (error.code === 'ECONNREFUSED') {
+            console.log('✗ Cannot connect to Cord API. Is the bot running? (cord start)');
+        } else {
+            console.log(`✗ Error: ${error.message}`);
+        }
+        process.exit(1);
+    }
+}
+
 function showHelp() {
     console.log(`
 Cord - Discord to Claude Code bridge
@@ -590,6 +611,7 @@ Management Commands:
   start              Start bot and worker
   stop               Stop all processes
   status             Show running status
+  health             Check Discord connection
   setup              Interactive setup wizard
   help               Show this help
 
@@ -674,6 +696,9 @@ switch (command) {
         break;
     case 'setup':
         setup();
+        break;
+    case 'health':
+        health();
         break;
     case 'help':
     case '--help':
