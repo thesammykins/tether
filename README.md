@@ -6,6 +6,11 @@ A Discord bot that connects to Claude Code CLI, plus a Claude Code skill that le
 
 [![npm version](https://badge.fury.io/js/cord-bot.svg)](https://www.npmjs.com/package/cord-bot)
 
+<p align="center">
+  <img src="docs/screenshot-channel.png" alt="Channel view with thread status" width="300" />
+  <img src="docs/screenshot-thread.png" alt="Thread with rich embeds" width="300" />
+</p>
+
 ## What You Get
 
 **Discord Bot** — @mention the bot in Discord, it spawns Claude Code to respond. Conversations happen in threads with full context preserved across messages.
