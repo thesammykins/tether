@@ -1,24 +1,24 @@
 ---
-name: cord
-description: Send messages, embeds, files, and interactive buttons to Discord via the Cord CLI. Use for notifications, reports, interactive choices, and dynamic Discord interactions.
+name: tether
+description: Send messages, embeds, files, and interactive buttons to Distether via the Tether CLI. Use for notifications, reports, interactive choices, and dynamic Distether interactions.
 triggers:
-  - "send to discord"
-  - "post to discord"
-  - "discord message"
-  - "notify discord"
+  - "send to distether"
+  - "post to distether"
+  - "distether message"
+  - "notify distether"
 ---
 
-# Cord - Discord Bridge Skill
+# Tether - Distether Bridge Skill
 
-Interact with Discord through Cord's CLI commands. This skill teaches Claude Code how to send messages, embeds, files, and interactive buttons.
+Interact with Distether through Tether's CLI commands. This skill teaches AI agents how to send messages, embeds, files, and interactive buttons.
 
-**GitHub:** https://github.com/alexknowshtml/cord
+**GitHub:** https://github.com/thesammykins/tether
 
 ## Setup
 
-Ensure Cord is running:
+Ensure Tether is running:
 ```bash
-cord start
+tether start
 ```
 
 Verify it's connected:
@@ -36,12 +36,12 @@ curl -s http://localhost:2643/health
 Send a text message to a channel or thread.
 
 ```bash
-cord send <channel> "message"
+tether send <channel> "message"
 ```
 
 **Example:**
 ```bash
-cord send 123456789 "Hello world!"
+tether send 123456789 "Hello world!"
 ```
 
 ---
@@ -51,7 +51,7 @@ cord send 123456789 "Hello world!"
 Send a formatted embed card with optional styling.
 
 ```bash
-cord embed <channel> "description" [options]
+tether embed <channel> "description" [options]
 ```
 
 **Options:**
@@ -74,18 +74,18 @@ cord embed <channel> "description" [options]
 
 Simple embed:
 ```bash
-cord embed 123456789 "Daily status update" --title "Status Report" --color green
+tether embed 123456789 "Daily status update" --title "Status Report" --color green
 ```
 
 Embed with fields:
 ```bash
-cord embed 123456789 "Build completed successfully" \
+tether embed 123456789 "Build completed successfully" \
   --title "CI/CD Pipeline" \
   --color green \
   --field "Branch:main:inline" \
   --field "Duration:2m 34s:inline" \
   --field "Tests:142 passed" \
-  --footer "Deployed by Cord" \
+  --footer "Deployed by Tether" \
   --timestamp
 ```
 
@@ -96,13 +96,13 @@ cord embed 123456789 "Build completed successfully" \
 Send a file attachment.
 
 ```bash
-cord file <channel> <filepath> ["message"]
+tether file <channel> <filepath> ["message"]
 ```
 
 **Examples:**
 ```bash
-cord file 123456789 ./report.md "Here's the weekly report"
-cord file 123456789 ./logs.txt
+tether file 123456789 ./report.md "Here's the weekly report"
+tether file 123456789 ./logs.txt
 ```
 
 ---
@@ -112,7 +112,7 @@ cord file 123456789 ./logs.txt
 Send interactive buttons with optional handlers.
 
 ```bash
-cord buttons <channel> "prompt" --button label="..." id="..." [options]
+tether buttons <channel> "prompt" --button label="..." id="..." [options]
 ```
 
 **Button options:**
@@ -128,21 +128,21 @@ cord buttons <channel> "prompt" --button label="..." id="..." [options]
 
 Simple confirmation:
 ```bash
-cord buttons 123456789 "Deploy to production?" \
+tether buttons 123456789 "Deploy to production?" \
   --button label="Deploy" id="deploy-prod" style="success" \
   --button label="Cancel" id="cancel-deploy" style="secondary"
 ```
 
 With inline responses:
 ```bash
-cord buttons 123456789 "Approve this PR?" \
+tether buttons 123456789 "Approve this PR?" \
   --button label="Approve" id="approve" style="success" reply="Approved! Merging now." \
   --button label="Reject" id="reject" style="danger" reply="Rejected. Please revise."
 ```
 
 With webhook callback:
 ```bash
-cord buttons 123456789 "Start backup?" \
+tether buttons 123456789 "Start backup?" \
   --button label="Start Backup" id="backup-start" style="primary" webhook="http://localhost:8080/backup"
 ```
 
@@ -153,7 +153,7 @@ cord buttons 123456789 "Start backup?" \
 Show typing indicator (useful before slow operations).
 
 ```bash
-cord typing <channel>
+tether typing <channel>
 ```
 
 ---
@@ -163,7 +163,7 @@ cord typing <channel>
 Edit an existing message.
 
 ```bash
-cord edit <channel> <messageId> "new content"
+tether edit <channel> <messageId> "new content"
 ```
 
 ---
@@ -173,7 +173,7 @@ cord edit <channel> <messageId> "new content"
 Delete a message.
 
 ```bash
-cord delete <channel> <messageId>
+tether delete <channel> <messageId>
 ```
 
 ---
@@ -183,7 +183,7 @@ cord delete <channel> <messageId>
 Rename a thread.
 
 ```bash
-cord rename <threadId> "new name"
+tether rename <threadId> "new name"
 ```
 
 ---
@@ -193,7 +193,7 @@ cord rename <threadId> "new name"
 Reply to a specific message (shows reply preview).
 
 ```bash
-cord reply <channel> <messageId> "message"
+tether reply <channel> <messageId> "message"
 ```
 
 ---
@@ -203,7 +203,7 @@ cord reply <channel> <messageId> "message"
 Create a thread from a message.
 
 ```bash
-cord thread <channel> <messageId> "thread name"
+tether thread <channel> <messageId> "thread name"
 ```
 
 ---
@@ -213,12 +213,12 @@ cord thread <channel> <messageId> "thread name"
 Add a reaction to a message.
 
 ```bash
-cord react <channel> <messageId> "emoji"
+tether react <channel> <messageId> "emoji"
 ```
 
 **Example:**
 ```bash
-cord react 123456789 987654321 "👍"
+tether react 123456789 987654321 "👍"
 ```
 
 ---
@@ -228,7 +228,7 @@ cord react 123456789 987654321 "👍"
 Update a message with a status indicator. Use this to show work progress on a thread starter or status message.
 
 ```bash
-cord state <channel> <messageId> <state>
+tether state <channel> <messageId> <state>
 ```
 
 **Preset states:**
@@ -246,13 +246,13 @@ cord state <channel> <messageId> <state>
 
 Using presets:
 ```bash
-cord state 123456789 987654321 processing
-cord state 123456789 987654321 done
+tether state 123456789 987654321 processing
+tether state 123456789 987654321 done
 ```
 
 Custom status:
 ```bash
-cord state 123456789 987654321 "🔄 Syncing database..."
+tether state 123456789 987654321 "🔄 Syncing database..."
 ```
 
 ---
@@ -261,15 +261,15 @@ cord state 123456789 987654321 "🔄 Syncing database..."
 
 | Use Case | Command |
 |----------|---------|
-| Simple notification | `cord send` |
-| Formatted status update | `cord embed` |
-| Long content (logs, reports) | `cord file` |
-| User needs to make a choice | `cord buttons` |
-| Indicate processing (typing bubble) | `cord typing` |
-| Update thread/message status | `cord state` |
-| Update previous message | `cord edit` |
-| Start a focused discussion | `cord thread` |
-| Quick acknowledgment | `cord react` |
+| Simple notification | `tether send` |
+| Formatted status update | `tether embed` |
+| Long content (logs, reports) | `tether file` |
+| User needs to make a choice | `tether buttons` |
+| Indicate processing (typing bubble) | `tether typing` |
+| Update thread/message status | `tether state` |
+| Update previous message | `tether edit` |
+| Start a focused discussion | `tether thread` |
+| Quick acknowledgment | `tether react` |
 
 ---
 
@@ -279,14 +279,14 @@ cord state 123456789 987654321 "🔄 Syncing database..."
 
 ```bash
 # Send the notification
-cord embed 123456789 "Build failed on main branch" \
+tether embed 123456789 "Build failed on main branch" \
   --title "CI Alert" \
   --color red \
   --field "Error:Test suite timeout" \
   --field "Commit:abc1234:inline"
 
 # Offer actions
-cord buttons 123456789 "What would you like to do?" \
+tether buttons 123456789 "What would you like to do?" \
   --button label="View Logs" id="view-logs" style="primary" reply="Fetching logs..." \
   --button label="Retry Build" id="retry" style="success" webhook="http://ci/retry" \
   --button label="Ignore" id="ignore" style="secondary" reply="Acknowledged"
@@ -296,44 +296,44 @@ cord buttons 123456789 "What would you like to do?" \
 
 ```bash
 # Start with typing indicator
-cord typing 123456789
+tether typing 123456789
 
 # Send initial status message
-MSGID=$(cord send 123456789 "🤖 Processing..." | grep -o '[0-9]*$')
+MSGID=$(tether send 123456789 "🤖 Processing..." | grep -o '[0-9]*$')
 
 # Update state as work progresses
-cord state 123456789 $MSGID searching
-cord state 123456789 $MSGID writing
-cord state 123456789 $MSGID done
+tether state 123456789 $MSGID searching
+tether state 123456789 $MSGID writing
+tether state 123456789 $MSGID done
 ```
 
 Or with custom progress:
 ```bash
-cord state 123456789 $MSGID "🔄 Step 1/3: Fetching data..."
-cord state 123456789 $MSGID "🔄 Step 2/3: Processing..."
-cord state 123456789 $MSGID "🔄 Step 3/3: Generating report..."
-cord state 123456789 $MSGID done
+tether state 123456789 $MSGID "🔄 Step 1/3: Fetching data..."
+tether state 123456789 $MSGID "🔄 Step 2/3: Processing..."
+tether state 123456789 $MSGID "🔄 Step 3/3: Generating report..."
+tether state 123456789 $MSGID done
 ```
 
 ### Report delivery
 
 ```bash
 # Send summary embed
-cord embed 123456789 "Weekly metrics compiled" \
+tether embed 123456789 "Weekly metrics compiled" \
   --title "Weekly Report Ready" \
   --color blue \
   --field "Period:Jan 15-21:inline" \
   --field "Pages:12:inline"
 
 # Attach the full report
-cord file 123456789 ./weekly-report.pdf "Full report attached"
+tether file 123456789 ./weekly-report.pdf "Full report attached"
 ```
 
 ### Confirmation flow
 
 ```bash
 # Ask for confirmation
-cord buttons 123456789 "Delete all archived items older than 30 days?" \
+tether buttons 123456789 "Delete all archived items older than 30 days?" \
   --button label="Yes, Delete" id="confirm-delete" style="danger" reply="Deleting..." \
   --button label="Cancel" id="cancel-delete" style="secondary" reply="Cancelled"
 ```
@@ -342,7 +342,7 @@ cord buttons 123456789 "Delete all archived items older than 30 days?" \
 
 ## Auto-Complete Behavior
 
-When a user adds a ✅ reaction to the **last message** in a thread, Cord automatically:
+When a user adds a ✅ reaction to the **last message** in a thread, Tether automatically:
 1. Detects the reaction
 2. Updates the thread starter message to "✅ Done"
 

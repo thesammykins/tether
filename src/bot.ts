@@ -24,6 +24,13 @@ import { resolve } from 'path';
 import { claudeQueue } from './queue.js';
 import { db, getChannelConfigCached, setChannelConfig } from './db.js';
 import { startApiServer, buttonHandlers } from './api.js';
+import { checkAllowlist } from './middleware/allowlist.js';
+import { checkRateLimit } from './middleware/rate-limiter.js';
+import { acknowledgeMessage } from './features/ack.js';
+import { getChannelContext } from './features/channel-context.js';
+import { generateThreadName } from './features/thread-naming.js';
+import { checkSessionLimits } from './features/session-limits.js';
+import { handlePauseResume } from './features/pause-resume.js';
 
 // Allowed working directories (configurable via env, comma-separated)
 // If not set, any existing directory is allowed (backward compatible)
@@ -224,6 +231,27 @@ client.on(Events.MessageCreate, async (message: Message) => {
     // Ignore bots
     if (message.author.bot) return;
 
+    // Middleware: Check allowlist (users, roles, channels)
+    if (!checkAllowlist(message)) {
+        return; // Silently ignore messages from non-allowed users/channels
+    }
+
+    // Middleware: Check rate limits
+    if (!checkRateLimit(message.author.id)) {
+        await message.reply('⏳ Rate limit exceeded. Please wait a moment before trying again.');
+        return;
+    }
+
+    // Feature: Handle pause/resume
+    const pauseState = handlePauseResume(message);
+    if (pauseState.paused) {
+        // Message will be held in held_messages table
+        return;
+    }
+
+    // Feature: Acknowledge message (fire and forget)
+    acknowledgeMessage(message).catch(err => log(`Failed to acknowledge message: ${err}`));
+
     const isMentioned = client.user && message.mentions.has(client.user);
     const isInThread = message.channel.isThread();
 
@@ -298,15 +326,19 @@ client.on(Events.MessageCreate, async (message: Message) => {
         statusMessage = await (message.channel as TextChannel).send('Processing...');
 
         // Generate thread name from cleaned message content
-        const threadName = cleanedMessage.length > 50
-            ? cleanedMessage.slice(0, 47) + '...'
-            : cleanedMessage || 'New conversation';
+        const threadName = generateThreadName(cleanedMessage);
 
         // Create thread from the status message
         thread = await statusMessage.startThread({
             name: threadName,
             autoArchiveDuration: ThreadAutoArchiveDuration.OneDay,
         });
+
+        // Feature: Get channel context for new conversations
+        const channelContext = await getChannelContext(message.channel as TextChannel);
+        if (channelContext) {
+            log(`Channel context: ${channelContext.slice(0, 100)}...`);
+        }
 
         // Copy the original message content into the thread for context
         // (excluding the bot mention and the status message)
@@ -323,6 +355,12 @@ client.on(Events.MessageCreate, async (message: Message) => {
 
     // Generate a new session ID for this conversation
     const sessionId = crypto.randomUUID();
+
+    // Feature: Check session limits before spawning
+    if (!checkSessionLimits(thread.id)) {
+        await thread.send('⚠️ Session limit reached. Please wait before starting a new conversation.');
+        return;
+    }
 
     // Store the thread → session mapping with working directory
     // Note: thread.id === statusMessage.id because thread was created from that message
@@ -391,14 +429,48 @@ client.on(Events.MessageReactionAdd, async (reaction, user) => {
     }
 });
 
-// Start the bot
+// Start the bot with exponential backoff
 const token = process.env.DISCORD_BOT_TOKEN;
 if (!token) {
     console.error('DISCORD_BOT_TOKEN required');
     process.exit(1);
 }
 
-client.login(token);
+// Exponential backoff for Discord gateway connection (Issue #7)
+async function connectWithBackoff() {
+    let attempt = 0;
+    let delay = 1000; // Start at 1 second
+    const maxDelay = 30000; // Cap at 30 seconds
+
+    while (true) {
+        try {
+            log(`Connecting to Discord gateway (attempt ${attempt + 1})...`);
+            await client.login(token);
+            break; // Connection successful
+        } catch (error: any) {
+            // Fatal errors - don't retry
+            if (error.code === 'TokenInvalid' || 
+                error.message?.includes('invalid token') ||
+                error.message?.includes('Incorrect login') ||
+                error.code === 'DisallowedIntents' ||
+                error.message?.includes('intents')) {
+                log(`Fatal error: ${error.message}`);
+                process.exit(1);
+            }
+
+            // Transient errors - retry with backoff
+            log(`Connection failed: ${error.message}`);
+            attempt++;
+            log(`Retrying in ${delay}ms...`);
+            await new Promise(resolve => setTimeout(resolve, delay));
+            
+            // Exponential backoff: double the delay, cap at maxDelay
+            delay = Math.min(delay * 2, maxDelay);
+        }
+    }
+}
+
+connectWithBackoff();
 
 // Export for external use
 export { client };

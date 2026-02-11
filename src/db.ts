@@ -52,6 +52,40 @@ db.run(`
     ON threads(session_id)
 `);
 
+// Create paused_threads table
+db.run(`
+    CREATE TABLE IF NOT EXISTS paused_threads (
+        thread_id TEXT PRIMARY KEY,
+        paused_at INTEGER NOT NULL,
+        paused_by TEXT
+    )
+`);
+
+// Create held_messages table
+db.run(`
+    CREATE TABLE IF NOT EXISTS held_messages (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        thread_id TEXT NOT NULL,
+        author_id TEXT NOT NULL,
+        content TEXT NOT NULL,
+        created_at INTEGER NOT NULL
+    )
+`);
+
+// Create rate_limits table
+db.run(`
+    CREATE TABLE IF NOT EXISTS rate_limits (
+        user_id TEXT NOT NULL,
+        timestamp INTEGER NOT NULL
+    )
+`);
+
+// Create index for rate limit cleanup
+db.run(`
+    CREATE INDEX IF NOT EXISTS idx_rate_limits_timestamp
+    ON rate_limits(timestamp)
+`);
+
 console.log(`[db] SQLite database ready at ${DB_PATH}`);
 
 // In-memory cache for channel configs (TTL: 5 minutes)
