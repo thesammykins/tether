@@ -11,6 +11,7 @@ import { Worker, Job } from 'bullmq';
 import IORedis from 'ioredis';
 import { getAdapter } from './adapters/registry.js';
 import { sendToThread } from './discord.js';
+import { isAway } from './features/brb.js';
 import type { ClaudeJob } from './queue.js';
 
 const log = (msg: string) => process.stdout.write(`[worker] ${msg}\n`);
@@ -34,8 +35,26 @@ const worker = new Worker<ClaudeJob>(
             const adapter = getAdapter();
             log(`Using adapter: ${adapter.name}`);
 
+            // If user is away (BRB mode), prepend guidance to use tether ask CLI
+            let effectivePrompt = prompt;
+            if (isAway(threadId)) {
+                const brbPrefix = [
+                    '[IMPORTANT: The user is currently away from this conversation.',
+                    'If you need to ask them a question or get their input, DO NOT use your built-in question/approval tools.',
+                    'Instead, use the tether CLI:',
+                    '',
+                    `  tether ask ${threadId} "Your question here" --option "Option A" --option "Option B"`,
+                    '',
+                    'This will send interactive buttons to Discord and block until the user responds.',
+                    'The selected option will be printed to stdout.',
+                    `Thread ID for this conversation: ${threadId}]`,
+                ].join('\n');
+                effectivePrompt = `${brbPrefix}\n\n${prompt}`;
+                log(`BRB mode active for thread ${threadId} — injected tether ask guidance`);
+            }
+
             const result = await adapter.spawn({
-                prompt,
+                prompt: effectivePrompt,
                 sessionId,
                 resume,
                 workingDir,

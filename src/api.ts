@@ -22,6 +22,12 @@ type ButtonHandler = {
 
 export const buttonHandlers = new Map<string, ButtonHandler>();
 
+// Question response store — maps requestId to response
+export const questionResponses = new Map<string, { answer: string; optionIndex: number } | null>();
+
+// Track which threads are waiting for a typed answer
+export const pendingTypedAnswers = new Map<string, string>(); // threadId → requestId
+
 /**
  * Start the HTTP API server
  */
@@ -215,6 +221,85 @@ export function startApiServer(client: Client, port: number = 2643) {
                         headers,
                     });
                 }
+            }
+
+            // Question response webhook - POST /question-response/:requestId
+            if (url.pathname.startsWith('/question-response/') && req.method === 'POST') {
+                try {
+                    const requestId = url.pathname.split('/question-response/')[1];
+                    if (!requestId) {
+                        return new Response(JSON.stringify({ error: 'Missing requestId' }), {
+                            status: 400,
+                            headers,
+                        });
+                    }
+
+                    const body = await req.json() as {
+                        customId: string;
+                        userId: string;
+                        channelId: string;
+                        data: {
+                            option: string;
+                            optionIndex: number;
+                            threadId?: string;
+                        };
+                    };
+
+                    // Store the response
+                    questionResponses.set(requestId, {
+                        answer: body.data.option,
+                        optionIndex: body.data.optionIndex,
+                    });
+
+                    // If user clicked "Type answer", track it
+                    if (body.data.option === '__type__' && body.data.threadId) {
+                        pendingTypedAnswers.set(body.data.threadId, requestId);
+                    }
+
+                    // Auto-cleanup after 10 minutes
+                    setTimeout(() => questionResponses.delete(requestId), 600_000);
+
+                    log(`Question response stored: ${requestId} → ${body.data.option}`);
+
+                    return new Response(JSON.stringify({ success: true }), { headers });
+                } catch (error) {
+                    log(`Question response error: ${error}`);
+                    return new Response(JSON.stringify({ error: String(error) }), {
+                        status: 500,
+                        headers,
+                    });
+                }
+            }
+
+            // Get question response - GET /question-response/:requestId
+            if (url.pathname.startsWith('/question-response/') && req.method === 'GET') {
+                const requestId = url.pathname.split('/question-response/')[1];
+                if (!requestId) {
+                    return new Response(JSON.stringify({ error: 'Missing requestId' }), {
+                        status: 400,
+                        headers,
+                    });
+                }
+
+                if (!questionResponses.has(requestId)) {
+                    return new Response(JSON.stringify({ error: 'Unknown requestId' }), {
+                        status: 404,
+                        headers,
+                    });
+                }
+
+                const response = questionResponses.get(requestId);
+                if (response === null || response === undefined) {
+                    // Registered but not yet answered (or not found, but we checked has() above)
+                    return new Response(JSON.stringify({ answered: false }), { headers });
+                }
+
+                // Answered
+                return new Response(JSON.stringify({
+                    answered: true,
+                    answer: response.answer,
+                    optionIndex: response.optionIndex,
+                }), { headers });
             }
 
             // 404 for unknown routes

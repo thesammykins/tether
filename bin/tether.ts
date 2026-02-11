@@ -14,6 +14,7 @@
  *   tether embed <channel> "description" [--title, --color, --field, etc.]
  *   tether file <channel> <filepath> "message"
  *   tether buttons <channel> "prompt" --button label="..." id="..." [style, reply, webhook]
+ *   tether ask <channel> "question" --option "A" --option "B" [--timeout 300]
  *   tether typing <channel>
  *   tether edit <channel> <messageId> "content"
  *   tether delete <channel> <messageId>
@@ -34,6 +35,7 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync, cpSync } from 'fs';
 import { join, dirname } from 'path';
 import * as readline from 'readline';
 import { homedir } from 'os';
+import { randomUUID } from 'crypto';
 
 const PID_FILE = join(process.cwd(), '.tether.pid');
 const API_BASE = process.env.TETHER_API_URL || 'http://localhost:2643';
@@ -279,6 +281,134 @@ async function sendButtons() {
         buttons,
     });
     console.log(`Sent buttons: ${result.messageId}`);
+}
+
+async function askQuestion() {
+    const channel = args[0];
+    const questionText = args[1];
+
+    if (!channel || !questionText) {
+        console.error('Usage: tether ask <channelId> "question text" --option "Option A" --option "Option B" [--timeout 300]');
+        process.exit(1);
+    }
+
+    // Parse options and timeout
+    const options: string[] = [];
+    let timeout = 300; // Default 300 seconds (5 minutes)
+    let i = 2;
+
+    while (i < args.length) {
+        const arg = args[i];
+        if (arg === '--option' && args[i + 1]) {
+            options.push(args[i + 1]);
+            i += 2;
+        } else if (arg === '--timeout' && args[i + 1]) {
+            timeout = parseInt(args[i + 1], 10);
+            if (isNaN(timeout) || timeout <= 0) {
+                console.error('Error: --timeout must be a positive number');
+                process.exit(1);
+            }
+            i += 2;
+        } else {
+            i++;
+        }
+    }
+
+    if (options.length === 0) {
+        console.error('Error: At least one --option is required');
+        process.exit(1);
+    }
+
+    // Generate unique request ID
+    const requestId = randomUUID();
+    const API_PORT = process.env.TETHER_API_PORT ? parseInt(process.env.TETHER_API_PORT) : 2643;
+
+    // Build buttons array: one per option + "Type answer" button
+    const buttons = options.map((label, index) => ({
+        label,
+        customId: `ask_${requestId}_${index}`,
+        style: 'primary',
+        handler: {
+            type: 'webhook',
+            url: `http://localhost:${API_PORT}/question-response/${requestId}`,
+            data: {
+                option: label,
+                optionIndex: index,
+            },
+        },
+    }));
+
+    // Add "Type answer" button
+    buttons.push({
+        label: '✏️ Type answer',
+        customId: `ask_${requestId}_type`,
+        style: 'secondary',
+        handler: {
+            type: 'webhook',
+            url: `http://localhost:${API_PORT}/question-response/${requestId}`,
+            data: {
+                option: '__type__',
+                optionIndex: -1,
+                threadId: channel,
+            },
+        },
+    } as any);
+
+    // Send buttons message
+    try {
+        await apiCall('/send-with-buttons', {
+            channelId: channel,
+            content: questionText,
+            buttons,
+        });
+    } catch (error) {
+        console.error('Failed to send question message');
+        process.exit(1);
+    }
+
+    // Poll for response
+    const pollInterval = 2000; // 2 seconds
+    const maxAttempts = Math.ceil((timeout * 1000) / pollInterval);
+    let attempts = 0;
+
+    while (attempts < maxAttempts) {
+        try {
+            const response = await fetch(`http://localhost:${API_PORT}/question-response/${requestId}`);
+            
+            if (response.status === 404) {
+                // Not yet registered or answered, keep polling
+                await new Promise(resolve => setTimeout(resolve, pollInterval));
+                attempts++;
+                continue;
+            }
+
+            if (response.ok) {
+                const data = await response.json() as { answered: boolean; answer?: string; optionIndex?: number };
+                
+                if (data.answered) {
+                    if (data.answer === '__type__') {
+                        // User clicked "Type answer" - keep polling for typed response
+                        await new Promise(resolve => setTimeout(resolve, pollInterval));
+                        attempts++;
+                        continue;
+                    }
+                    
+                    // Got a real answer
+                    console.log(data.answer);
+                    process.exit(0);
+                }
+            }
+        } catch (error) {
+            // Network error, keep trying
+        }
+
+        await new Promise(resolve => setTimeout(resolve, pollInterval));
+        attempts++;
+    }
+
+    // Timeout
+    console.error('No response received');
+    process.exit(1);
 }
 
 async function startTyping() {
@@ -749,6 +879,11 @@ Distether Commands:
         reply="..."          Ephemeral reply when clicked
         webhook="..."        URL to POST click data to
 
+  ask <channel> "question" --option "A" --option "B" [--timeout 300]
+      Ask a blocking question with button options (blocks until answered)
+      Prints selected answer to stdout, exits 0 on success, 1 on timeout
+      Automatically includes a "Type answer" button for free-form input
+
   typing <channel>
       Show typing indicator
 
@@ -788,6 +923,7 @@ Examples:
   tether send 123456789 "Hello world!"
   tether embed 123456789 "Status update" --title "Daily Report" --color green --field "Tasks:5 done:inline"
   tether buttons 123456789 "Approve?" --button label="Yes" id="approve" style="success" reply="Approved!"
+  tether ask 123456789 "Deploy to prod?" --option "Yes" --option "No" --timeout 600
   tether file 123456789 ./report.md "Here's the report"
   tether state 123456789 1234567890 processing
    tether state 123456789 1234567890 done
@@ -835,6 +971,9 @@ switch (command) {
         break;
     case 'buttons':
         sendButtons();
+        break;
+    case 'ask':
+        askQuestion();
         break;
     case 'typing':
         startTyping();

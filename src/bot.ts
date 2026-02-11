@@ -34,6 +34,8 @@ import { getChannelContext } from './features/channel-context.js';
 import { generateThreadName } from './features/thread-naming.js';
 import { checkSessionLimits } from './features/session-limits.js';
 import { handlePauseResume } from './features/pause-resume.js';
+import { isBrbMessage, isBackMessage, setBrb, setBack } from './features/brb.js';
+import { questionResponses, pendingTypedAnswers } from './api.js';
 
 // DM support - opt-in via env var (disabled by default for security)
 const ENABLE_DMS = process.env.ENABLE_DMS === 'true';
@@ -217,7 +219,7 @@ client.on(Events.InteractionCreate, async (interaction: Interaction) => {
                 content: handler.content,
                 ephemeral: handler.ephemeral ?? false,
             });
-        } else if (handler.type === 'webhook') {
+        } else         if (handler.type === 'webhook') {
             await interaction.deferReply({ ephemeral: true });
             const response = await fetch(handler.url, {
                 method: 'POST',
@@ -230,7 +232,14 @@ client.on(Events.InteractionCreate, async (interaction: Interaction) => {
                 }),
             });
             const result = await response.json() as { content?: string };
-            await interaction.editReply({ content: result.content || 'Done.' });
+
+            // If this was a "Type answer" button, prompt the user to type below
+            const isTypeAnswer = handler.data && (handler.data as Record<string, unknown>).option === '__type__';
+            await interaction.editReply({
+                content: isTypeAnswer
+                    ? '✏️ Type your answer below in this thread — your next message will be captured.'
+                    : (result.content || 'Done.'),
+            });
         }
     } catch (error) {
         log(`Button handler error: ${error}`);
@@ -267,11 +276,33 @@ client.on(Events.MessageCreate, async (message: Message) => {
         const content = message.content.trim();
         if (!content) return;
 
+        // BRB/back detection for DM channels
+        const dmChannelId = message.channel.id;
+        if (isBrbMessage(content)) {
+            setBrb(dmChannelId);
+            await message.reply("👋 Got it — I'll send questions here when I need your input. Say **back** when you return.");
+            return;
+        }
+        if (isBackMessage(content)) {
+            setBack(dmChannelId);
+            await message.reply('👋 Welcome back! Normal prompts from here.');
+            return;
+        }
+
+        // Typed answer capture — if a pending typed answer exists for this DM channel,
+        // store the user's message as the real response instead of queuing it
+        if (pendingTypedAnswers.has(dmChannelId)) {
+            const requestId = pendingTypedAnswers.get(dmChannelId)!;
+            questionResponses.set(requestId, { answer: content, optionIndex: -1 });
+            pendingTypedAnswers.delete(dmChannelId);
+            await message.reply('✅ Answer received.');
+            return;
+        }
+
         log(`DM from ${message.author.tag}: ${content.slice(0, 80)}...`);
 
         // DMs use a synthetic "thread" ID based on the DM channel for session tracking.
         // Each DM channel maps 1:1 to a user, so channelId is the session key.
-        const dmChannelId = message.channel.id;
 
         // Look up existing session for this DM channel
         const mapping = db.query('SELECT session_id, working_dir FROM threads WHERE thread_id = ?')
@@ -361,6 +392,21 @@ client.on(Events.MessageCreate, async (message: Message) => {
     // Feature: Acknowledge message (fire and forget)
     acknowledgeMessage(message).catch(err => log(`Failed to acknowledge message: ${err}`));
 
+    // Typed answer capture — if a pending typed answer exists for this channel,
+    // store the user's message as the real response instead of normal processing.
+    // This handles the "✏️ Type answer" flow from `tether ask` in regular channels.
+    const channelId = message.channel.id;
+    if (pendingTypedAnswers.has(channelId)) {
+        const requestId = pendingTypedAnswers.get(channelId)!;
+        const content = message.content.trim();
+        if (content) {
+            questionResponses.set(requestId, { answer: content, optionIndex: -1 });
+            pendingTypedAnswers.delete(channelId);
+            await message.reply('✅ Answer received.');
+        }
+        return;
+    }
+
     const isMentioned = client.user && message.mentions.has(client.user);
     const isInThread = message.channel.isThread();
 
@@ -379,13 +425,35 @@ client.on(Events.MessageCreate, async (message: Message) => {
             return;
         }
 
+        // Extract message content (strip @mentions)
+        const threadContent = message.content.replace(/<@!?\d+>/g, '').trim();
+
+        // BRB/back detection for threads
+        if (isBrbMessage(threadContent)) {
+            setBrb(thread.id);
+            await message.reply("👋 Got it — I'll send questions here when I need your input. Say **back** when you return.");
+            return;
+        }
+        if (isBackMessage(threadContent)) {
+            setBack(thread.id);
+            await message.reply('👋 Welcome back! Normal prompts from here.');
+            return;
+        }
+
+        // Typed answer capture — if a pending typed answer exists for this thread,
+        // store the user's message as the real response instead of queuing it
+        if (pendingTypedAnswers.has(thread.id)) {
+            const requestId = pendingTypedAnswers.get(thread.id)!;
+            questionResponses.set(requestId, { answer: threadContent, optionIndex: -1 });
+            pendingTypedAnswers.delete(thread.id);
+            await message.reply('✅ Answer received.');
+            return;
+        }
+
         log(`Thread message from ${message.author.tag}`);
 
         // Show typing indicator
         await thread.sendTyping();
-
-        // Extract message content (strip @mentions)
-        const content = message.content.replace(/<@!?\d+>/g, '').trim();
 
         // Use stored working dir or fall back to channel config / env / cwd
         const workingDir = mapping.working_dir ||
@@ -395,7 +463,7 @@ client.on(Events.MessageCreate, async (message: Message) => {
 
         // Queue for Claude processing with session resume
         await claudeQueue.add('process', {
-            prompt: content,
+            prompt: threadContent,
             threadId: thread.id,
             sessionId: mapping.session_id,
             resume: true,

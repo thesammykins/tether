@@ -276,6 +276,7 @@ tether state 123456789 987654321 "🔄 Syncing database..."
 | Formatted status update | `tether embed` |
 | Long content (logs, reports) | `tether file` |
 | User needs to make a choice | `tether buttons` |
+| Ask user a question (blocks until answer) | `tether ask` |
 | Indicate processing (typing bubble) | `tether typing` |
 | Update thread/message status | `tether state` |
 | Update previous message | `tether edit` |
@@ -378,6 +379,66 @@ resume
 ```
 
 When paused, messages are held in a queue and processed when resumed.
+
+---
+
+## BRB Mode / Away Questions
+
+When the user says **brb** (or "afk", "be right back", "stepping away") in a thread, Tether flags that session as "away." While away, the agent's prompt is augmented with instructions to use `tether ask` instead of built-in question tools.
+
+When the user says **back** (or "im back", "i'm back", "here"), the flag is cleared and normal interaction resumes.
+
+### How It Works
+
+1. User types `brb` → bot replies with confirmation, flags thread as away
+2. Agent receives system prompt guidance: "Use `tether ask` for questions"
+3. Agent runs `tether ask` → Discord buttons appear in the thread
+4. User clicks a button (or types a free-text answer) → agent gets the response via stdout
+5. User types `back` → flag cleared, normal flow resumes
+
+### ask
+
+Ask the user a question with interactive buttons. Blocks until an answer is received.
+
+```bash
+tether ask <channelId> "question" --option "Option A" --option "Option B" [--timeout 300]
+```
+
+**Options:**
+| Flag | Description |
+|------|-------------|
+| `--option "..."` | Add a button option (repeatable, at least 1 required) |
+| `--timeout <seconds>` | Timeout in seconds (default: 300 = 5 minutes) |
+
+A "✏️ Type answer" button is always appended automatically, letting the user type a free-text response instead of picking from the options.
+
+**Output:**
+- On success: prints the selected option text to **stdout**, exits `0`
+- On timeout: prints "No response received" to **stderr**, exits `1`
+- For typed answers: prints whatever the user typed to **stdout**
+
+**Examples:**
+
+Simple yes/no:
+```bash
+tether ask 123456789 "Should I deploy to production?" --option "Yes" --option "No"
+```
+
+Multiple choice:
+```bash
+tether ask 123456789 "Which database migration strategy?" \
+  --option "Rolling migration" \
+  --option "Blue-green deploy" \
+  --option "Skip for now"
+```
+
+With custom timeout (10 minutes):
+```bash
+tether ask 123456789 "Review this PR before I merge?" \
+  --option "Approve" \
+  --option "Request changes" \
+  --timeout 600
+```
 
 ---
 
