@@ -7,6 +7,7 @@ triggers:
   - "discord message"
   - "notify discord"
   - "tether"
+  - "brb"
 ---
 
 # Tether - Discord Bridge Skill
