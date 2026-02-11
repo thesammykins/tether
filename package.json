@@ -1,0 +1,31 @@
+{
+  "name": "cord-bot",
+  "version": "1.1.6",
+  "description": "Discord bot that bridges messages to Claude Code sessions",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/alexknowshtml/cord"
+  },
+  "module": "index.ts",
+  "type": "module",
+  "bin": {
+    "cord": "bin/cord.ts"
+  },
+  "scripts": {
+    "start": "bun run bin/cord.ts start",
+    "bot": "bun run src/bot.ts",
+    "worker": "bun run src/worker.ts",
+    "setup": "bun run bin/cord.ts setup"
+  },
+  "devDependencies": {
+    "@types/bun": "latest"
+  },
+  "peerDependencies": {
+    "typescript": "^5"
+  },
+  "dependencies": {
+    "bullmq": "^5.67.1",
+    "discord.js": "^14.25.1",
+    "ioredis": "^5.9.2"
+  }
+}
