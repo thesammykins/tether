@@ -1,5 +1,8 @@
 # @thesammykins/tether
 
+[![npm version](https://img.shields.io/npm/v/@thesammykins/tether)](https://www.npmjs.com/package/@thesammykins/tether)
+[![license](https://img.shields.io/npm/l/@thesammykins/tether)](./LICENSE)
+
 Discord bot that bridges messages to AI coding agents. Supports Claude Code, OpenCode, and Codex CLI.
 
 Fork of [cord](https://github.com/alexknowshtml/cord) with multi-agent support and enhanced features.
@@ -7,6 +10,7 @@ Fork of [cord](https://github.com/alexknowshtml/cord) with multi-agent support a
 ## Features
 
 - **Multi-agent support** — Claude Code, OpenCode, Codex (switch via `AGENT_TYPE` env var)
+- **BRB mode** — Agent asks questions via Discord buttons; `tether ask` blocks until answered
 - **Direct messages** — Chat with the bot privately via DMs (opt-in)
 - **Access control** — User, role, and channel allowlists
 - **Rate limiting** — Per-user sliding window
@@ -25,6 +29,14 @@ Fork of [cord](https://github.com/alexknowshtml/cord) with multi-agent support a
 - An AI agent CLI installed on PATH (`claude`, `opencode`, or `codex`)
 
 ### Install
+
+From the npm registry (requires [Bun](https://bun.sh)):
+
+```bash
+bun add @thesammykins/tether
+```
+
+Or clone from source:
 
 ```bash
 git clone https://github.com/thesammykins/tether.git
@@ -273,9 +285,10 @@ bun test tests/integration/  # Integration tests only
 
 ## CLI Commands
 
-See [skills/tether/SKILL.md](./skills/tether/SKILL.md) for full CLI documentation.
-
 Quick reference:
+- `tether start` — Start bot + worker
+- `tether stop` — Stop all processes
+- `tether status` — Show running status
 - `tether send <channel> "message"` — Send text message
 - `tether embed <channel> "text" --title "T"` — Send formatted embed
 - `tether file <channel> ./file.txt` — Send file attachment
@@ -284,12 +297,11 @@ Quick reference:
 - `tether dm <user-id> "message"` — Send a DM to a user (proactive outreach)
 - `tether dm <user-id> --embed "text" --title "T"` — Send an embed DM
 - `tether dm <user-id> --file ./report.md` — Send a file via DM
+- `tether ask <channel> "question" --button "Yes" --button "No"` — Ask a question via buttons, blocks until answered
 
 ## HTTP API
 
-Tether exposes an HTTP API on port 2643 for external scripts and webhooks.
-
-See [skills/tether/HTTP-API.md](./skills/tether/HTTP-API.md) for API documentation.
+Tether exposes an HTTP API on port 2643 for external scripts and webhooks. See the [API documentation](./skills/tether/HTTP-API.md) for details.
 
 ## Troubleshooting
 

@@ -1,34 +1,64 @@
 {
   "name": "@thesammykins/tether",
-  "version": "1.1.6",
+  "version": "1.0.0",
   "description": "Discord bot that bridges messages to AI agent sessions (Claude, OpenCode, Codex)",
+  "license": "MIT",
+  "author": "thesammykins",
+  "homepage": "https://github.com/thesammykins/tether#readme",
   "repository": {
     "type": "git",
     "url": "https://github.com/thesammykins/tether"
   },
+  "bugs": {
+    "url": "https://github.com/thesammykins/tether/issues"
+  },
+  "keywords": [
+    "discord",
+    "bot",
+    "ai",
+    "claude",
+    "opencode",
+    "codex",
+    "agent",
+    "bridge",
+    "bun"
+  ],
   "publishConfig": {
     "access": "public"
   },
-  "module": "index.ts",
   "type": "module",
+  "module": "index.ts",
+  "main": "index.ts",
   "bin": {
     "tether": "bin/tether.ts"
   },
+  "files": [
+    "src/",
+    "bin/tether.ts",
+    "index.ts",
+    "README.md",
+    "LICENSE",
+    ".env.example"
+  ],
   "scripts": {
     "start": "bun run bin/tether.ts start",
     "bot": "bun run src/bot.ts",
     "worker": "bun run src/worker.ts",
-    "setup": "bun run bin/tether.ts setup"
-  },
-  "devDependencies": {
-    "@types/bun": "latest"
-  },
-  "peerDependencies": {
-    "typescript": "^5"
+    "setup": "bun run bin/tether.ts setup",
+    "test": "bun test"
   },
   "dependencies": {
     "bullmq": "^5.67.1",
     "discord.js": "^14.25.1",
     "ioredis": "^5.9.2"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.3.9"
+  },
+  "peerDependencies": {
+    "typescript": "^5"
+  },
+  "engines": {
+    "bun": ">=1.1.0"
   }
 }

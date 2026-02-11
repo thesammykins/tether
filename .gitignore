@@ -43,4 +43,7 @@ data/
 bun.lock
 
 # PID file
-.cord.pid
+.tether.pid
+
+# Temp files
+tmp/
