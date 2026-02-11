@@ -1,18 +1,29 @@
 ---
 name: tether
-description: Send messages, embeds, files, and interactive buttons to Distether via the Tether CLI. Use for notifications, reports, interactive choices, and dynamic Distether interactions.
+description: Send messages, embeds, files, and interactive buttons to Discord via the Tether CLI. Multi-agent Discord bridge supporting Claude Code, OpenCode, and Codex.
 triggers:
-  - "send to distether"
-  - "post to distether"
-  - "distether message"
-  - "notify distether"
+  - "send to discord"
+  - "post to discord"
+  - "discord message"
+  - "notify discord"
+  - "tether"
 ---
 
-# Tether - Distether Bridge Skill
+# Tether - Discord Bridge Skill
 
-Interact with Distether through Tether's CLI commands. This skill teaches AI agents how to send messages, embeds, files, and interactive buttons.
+Interact with Discord through Tether's CLI commands. This skill teaches AI agents how to send messages, embeds, files, and interactive buttons.
 
 **GitHub:** https://github.com/thesammykins/tether
+
+## What is Tether?
+
+Tether is a Discord bot that bridges messages to AI coding agents (Claude Code, OpenCode, Codex). It supports:
+
+- Multi-agent backend selection via `AGENT_TYPE` env var
+- Access control (user/role/channel allowlists)
+- Rate limiting and session management
+- Thread-based conversations with auto-naming
+- Pause/resume for conversation control
 
 ## Setup
 
@@ -337,6 +348,36 @@ tether buttons 123456789 "Delete all archived items older than 30 days?" \
   --button label="Yes, Delete" id="confirm-delete" style="danger" reply="Deleting..." \
   --button label="Cancel" id="cancel-delete" style="secondary" reply="Cancelled"
 ```
+
+---
+
+## Multi-Agent Features
+
+Tether supports multiple AI agent backends via the `AGENT_TYPE` environment variable:
+
+- **Claude Code** (`AGENT_TYPE=claude`) — Default, uses `claude` CLI
+- **OpenCode** (`AGENT_TYPE=opencode`) — Uses `opencode` CLI
+- **Codex** (`AGENT_TYPE=codex`) — Uses `codex` CLI
+
+All agents use the same AgentAdapter interface, so switching is seamless.
+
+---
+
+## Session Management
+
+Tether provides pause/resume control for conversations:
+
+**Pause a thread:**
+```
+pause
+```
+
+**Resume a thread:**
+```
+resume
+```
+
+When paused, messages are held in a queue and processed when resumed.
 
 ---
 

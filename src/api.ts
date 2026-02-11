@@ -100,6 +100,40 @@ export function startApiServer(client: Client, port: number = 2643) {
                 }
             }
 
+            // Send file via DM to a user
+            if (url.pathname === '/send-dm-file' && req.method === 'POST') {
+                try {
+                    const body = await req.json() as {
+                        userId: string;
+                        fileName: string;
+                        fileContent: string;
+                        content?: string;
+                    };
+
+                    const user = await client.users.fetch(body.userId);
+                    const buffer = Buffer.from(body.fileContent, 'utf-8');
+                    const message = await user.send({
+                        content: body.content || undefined,
+                        files: [{
+                            attachment: buffer,
+                            name: body.fileName,
+                        }],
+                    });
+
+                    return new Response(JSON.stringify({
+                        success: true,
+                        messageId: message.id,
+                        channelId: message.channelId,
+                    }), { headers });
+                } catch (error) {
+                    log(`Send DM file error: ${error}`);
+                    return new Response(JSON.stringify({ error: String(error) }), {
+                        status: 500,
+                        headers,
+                    });
+                }
+            }
+
             // Send message with buttons
             if (url.pathname === '/send-with-buttons' && req.method === 'POST') {
                 try {
@@ -334,6 +368,39 @@ async function handleCommand(
             const message = await (channel as TextChannel).messages.fetch(messageId);
             await message.react(emoji);
             return { success: true };
+        }
+
+        case 'send-dm': {
+            const userId = args.userId as string;
+            const message = args.message as string | undefined;
+            const embeds = args.embeds as Array<{
+                title?: string;
+                description?: string;
+                color?: number;
+                fields?: Array<{ name: string; value: string; inline?: boolean }>;
+                footer?: { text: string };
+            }> | undefined;
+
+            if (!userId) throw new Error('userId is required');
+            if (!message && !embeds?.length) throw new Error('message or embeds required');
+
+            const user = await client.users.fetch(userId);
+            const discordEmbeds = embeds?.map(e => {
+                const embed = new EmbedBuilder();
+                if (e.title) embed.setTitle(e.title);
+                if (e.description) embed.setDescription(e.description);
+                if (e.color) embed.setColor(e.color);
+                if (e.fields) embed.addFields(e.fields);
+                if (e.footer) embed.setFooter(e.footer);
+                return embed;
+            });
+
+            const sent = await user.send({
+                content: message || undefined,
+                embeds: discordEmbeds || undefined,
+            });
+
+            return { success: true, messageId: sent.id, channelId: sent.channelId };
         }
 
         default:

@@ -17,3 +17,7 @@ export function getAdapter(type?: string): AgentAdapter {
       throw new Error(`Unknown adapter type: ${adapterType}`);
   }
 }
+
+export function getSupportedAdapters(): string[] {
+  return ['claude', 'opencode', 'codex'];
+}

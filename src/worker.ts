@@ -3,13 +3,13 @@
  *
  * This is where the magic happens:
  * 1. Pulls jobs from the queue
- * 2. Spawns Claude CLI with the right flags
+ * 2. Spawns the configured agent adapter (Claude/OpenCode/Codex)
  * 3. Posts the response back to Discord
  */
 
 import { Worker, Job } from 'bullmq';
 import IORedis from 'ioredis';
-import { spawnClaude } from './spawner.js';
+import { getAdapter } from './adapters/registry.js';
 import { sendToThread } from './discord.js';
 import type { ClaudeJob } from './queue.js';
 
@@ -30,8 +30,11 @@ const worker = new Worker<ClaudeJob>(
         log(`Session: ${sessionId}, Resume: ${resume}`);
 
         try {
-            // Spawn Claude and get response
-            const response = await spawnClaude({
+            // Get the configured adapter and spawn
+            const adapter = getAdapter();
+            log(`Using adapter: ${adapter.name}`);
+
+            const result = await adapter.spawn({
                 prompt,
                 sessionId,
                 resume,
@@ -39,10 +42,10 @@ const worker = new Worker<ClaudeJob>(
             });
 
             // Send response to Discord thread
-            await sendToThread(threadId, response);
+            await sendToThread(threadId, result.output);
 
             log(`Job ${job.id} completed`);
-            return { success: true, responseLength: response.length };
+            return { success: true, responseLength: result.output.length };
 
         } catch (error) {
             log(`Job ${job.id} failed: ${error}`);

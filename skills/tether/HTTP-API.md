@@ -1,6 +1,6 @@
 # HTTP API Reference
 
-Low-level HTTP API for interacting with Distether. For Claude Code, use the CLI commands in [SKILL.md](./SKILL.md) instead.
+Low-level HTTP API for interacting with Discord. For AI agents, use the CLI commands in [SKILL.md](./SKILL.md) instead.
 
 **Port:** `2643` (configurable via `API_PORT` env var)
 

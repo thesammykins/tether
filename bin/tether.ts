@@ -22,6 +22,11 @@
  *   tether thread <channel> <messageId> "name"
  *   tether react <channel> <messageId> "emoji"
  *   tether state <channel> <messageId> <state>  (processing, done, error, or custom)
+ *
+ * DM Commands:
+ *   tether dm <user-id> "message"
+ *   tether dm <user-id> --embed "description" [--title, --color, --field, etc.]
+ *   tether dm <user-id> --file <filepath> ["message"]
  */
 
 import { spawn, spawnSync } from 'bun';
@@ -377,6 +382,104 @@ async function addReaction() {
     console.log(`Added reaction: ${emoji}`);
 }
 
+async function sendDM() {
+    const userId = args[0];
+    if (!userId) {
+        console.error('Usage: tether dm <user-id> "message"');
+        console.error('       tether dm <user-id> --embed "description" [--title, --color, ...]');
+        console.error('       tether dm <user-id> --file <filepath> ["message"]');
+        process.exit(1);
+    }
+
+    const subArgs = args.slice(1);
+
+    // --file mode: tether dm <user-id> --file <path> ["message"]
+    if (subArgs[0] === '--file') {
+        const filepath = subArgs[1];
+        const message = subArgs[2] || '';
+
+        if (!filepath) {
+            console.error('Usage: tether dm <user-id> --file <filepath> ["message"]');
+            process.exit(1);
+        }
+
+        if (!existsSync(filepath)) {
+            console.error(`Error: File not found: ${filepath}`);
+            process.exit(1);
+        }
+
+        const fileContent = readFileSync(filepath, 'utf-8');
+        const fileName = filepath.split('/').pop() || 'file.txt';
+
+        const result = await apiCall('/send-dm-file', {
+            userId,
+            fileName,
+            fileContent,
+            content: message,
+        });
+        console.log(`DM file sent: ${result.messageId}`);
+        return;
+    }
+
+    // --embed mode: tether dm <user-id> --embed "description" [--title, --color, ...]
+    if (subArgs[0] === '--embed') {
+        const embed: any = {};
+        const fields: any[] = [];
+        let description = '';
+        let i = 1;
+
+        while (i < subArgs.length) {
+            const arg = subArgs[i];
+            if (arg === '--title' && subArgs[i + 1]) {
+                embed.title = subArgs[++i];
+            } else if (arg === '--color' && subArgs[i + 1]) {
+                const colorArg = subArgs[++i].toLowerCase();
+                embed.color = COLORS[colorArg] || parseInt(colorArg.replace('0x', ''), 16) || 0;
+            } else if (arg === '--footer' && subArgs[i + 1]) {
+                embed.footer = { text: subArgs[++i] };
+            } else if (arg === '--field' && subArgs[i + 1]) {
+                const fieldStr = subArgs[++i];
+                const parts = fieldStr.split(':');
+                if (parts.length >= 2) {
+                    fields.push({
+                        name: parts[0],
+                        value: parts[1],
+                        inline: parts[2]?.toLowerCase() === 'inline',
+                    });
+                }
+            } else if (arg === '--timestamp') {
+                embed.timestamp = new Date().toISOString();
+            } else if (!arg.startsWith('--')) {
+                description = arg;
+            }
+            i++;
+        }
+
+        if (description) embed.description = description;
+        if (fields.length > 0) embed.fields = fields;
+
+        const result = await apiCall('/command', {
+            command: 'send-dm',
+            args: { userId, embeds: [embed] },
+        });
+        console.log(`DM embed sent: ${result.messageId}`);
+        return;
+    }
+
+    // Default: text message — tether dm <user-id> "message"
+    const message = subArgs[0];
+    if (!message) {
+        console.error('Usage: tether dm <user-id> "message"');
+        process.exit(1);
+    }
+
+    const result = await apiCall('/command', {
+        command: 'send-dm',
+        args: { userId, message },
+    });
+    console.log(`DM sent: ${result.messageId}`);
+}
+
 // State presets for thread status updates
 const STATE_PRESETS: Record<string, string> = {
     processing: '🤖 Processing...',
@@ -667,9 +770,19 @@ Distether Commands:
   react <channel> <messageId> "emoji"
       Add a reaction to a message
 
-  state <channel> <messageId> <state>
+   state <channel> <messageId> <state>
       Update thread status with preset or custom text
       Presets: processing, thinking, searching, writing, done, error, waiting
+
+DM Commands (proactive outreach):
+  dm <user-id> "message"
+      Send a text DM to a user
+
+  dm <user-id> --embed "description" [options]
+      Send an embed DM (same options as embed command)
+
+  dm <user-id> --file <filepath> ["message"]
+      Send a file attachment via DM
 
 Examples:
   tether send 123456789 "Hello world!"
@@ -677,7 +790,10 @@ Examples:
   tether buttons 123456789 "Approve?" --button label="Yes" id="approve" style="success" reply="Approved!"
   tether file 123456789 ./report.md "Here's the report"
   tether state 123456789 1234567890 processing
-  tether state 123456789 1234567890 done
+   tether state 123456789 1234567890 done
+  tether dm 987654321 "Hey, I need your approval on this PR"
+  tether dm 987654321 --embed "Build passed" --title "CI Update" --color green
+  tether dm 987654321 --file ./report.md "Here's the report"
 `);
 }
 
@@ -743,6 +859,9 @@ switch (command) {
         break;
     case 'state':
         updateState();
+        break;
+    case 'dm':
+        sendDM();
         break;
 
     default:

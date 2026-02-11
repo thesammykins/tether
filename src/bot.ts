@@ -14,6 +14,9 @@ import {
     Events,
     Message,
     TextChannel,
+    DMChannel,
+    ChannelType,
+    Partials,
     ThreadAutoArchiveDuration,
     SlashCommandBuilder,
     type Interaction,
@@ -31,6 +34,9 @@ import { getChannelContext } from './features/channel-context.js';
 import { generateThreadName } from './features/thread-naming.js';
 import { checkSessionLimits } from './features/session-limits.js';
 import { handlePauseResume } from './features/pause-resume.js';
+
+// DM support - opt-in via env var (disabled by default for security)
+const ENABLE_DMS = process.env.ENABLE_DMS === 'true';
 
 // Allowed working directories (configurable via env, comma-separated)
 // If not set, any existing directory is allowed (backward compatible)
@@ -116,7 +122,14 @@ const client = new Client({
         GatewayIntentBits.GuildMessages,
         GatewayIntentBits.MessageContent,
         GatewayIntentBits.GuildMessageReactions,
+        // DM support — partials required because DM channels are uncached
+        ...(ENABLE_DMS ? [
+            GatewayIntentBits.DirectMessages,
+            GatewayIntentBits.DirectMessageReactions,
+        ] : []),
     ],
+    // Partials.Channel is required for DMs — DM channels aren't cached by default
+    partials: ENABLE_DMS ? [Partials.Channel] : [],
 });
 
 client.once(Events.ClientReady, async (c) => {
@@ -230,6 +243,102 @@ client.on(Events.InteractionCreate, async (interaction: Interaction) => {
 client.on(Events.MessageCreate, async (message: Message) => {
     // Ignore bots
     if (message.author.bot) return;
+
+    // =========================================================================
+    // DM MESSAGES: Direct messages to the bot
+    // =========================================================================
+    const isDM = message.channel.type === ChannelType.DM;
+
+    if (isDM) {
+        if (!ENABLE_DMS) return; // DMs disabled — silently ignore
+
+        // Middleware: Check allowlist (user only — no roles/channels in DMs)
+        if (!checkAllowlist(message)) return;
+
+        // Middleware: Check rate limits
+        if (!checkRateLimit(message.author.id)) {
+            await message.reply('⏳ Rate limit exceeded. Please wait a moment before trying again.');
+            return;
+        }
+
+        // Feature: Acknowledge message
+        acknowledgeMessage(message).catch(err => log(`Failed to acknowledge DM: ${err}`));
+
+        const content = message.content.trim();
+        if (!content) return;
+
+        log(`DM from ${message.author.tag}: ${content.slice(0, 80)}...`);
+
+        // DMs use a synthetic "thread" ID based on the DM channel for session tracking.
+        // Each DM channel maps 1:1 to a user, so channelId is the session key.
+        const dmChannelId = message.channel.id;
+
+        // Look up existing session for this DM channel
+        const mapping = db.query('SELECT session_id, working_dir FROM threads WHERE thread_id = ?')
+            .get(dmChannelId) as { session_id: string; working_dir: string | null } | null;
+
+        // Show typing indicator
+        await (message.channel as DMChannel).sendTyping();
+
+        if (mapping) {
+            // Check session limits for ongoing DM session
+            if (!checkSessionLimits(dmChannelId)) {
+                await message.reply('⚠️ Session limit reached. Send `!reset` to start a new session.');
+                return;
+            }
+
+            // Handle !reset to start fresh DM session
+            if (content.toLowerCase() === '!reset') {
+                db.run('DELETE FROM threads WHERE thread_id = ?', [dmChannelId]);
+                await message.reply('🔄 Session reset. Your next message starts a new conversation.');
+                return;
+            }
+
+            // Resume existing session
+            const workingDir = mapping.working_dir ||
+                process.env.CLAUDE_WORKING_DIR ||
+                process.cwd();
+
+            await claudeQueue.add('process', {
+                prompt: content,
+                threadId: dmChannelId,
+                sessionId: mapping.session_id,
+                resume: true,
+                userId: message.author.id,
+                username: message.author.tag,
+                workingDir,
+            });
+        } else {
+            // New DM session
+            const sessionId = crypto.randomUUID();
+            const { workingDir, cleanedMessage, error: workingDirError } = resolveWorkingDir(content, dmChannelId);
+
+            if (workingDirError) {
+                await message.reply(workingDirError);
+                return;
+            }
+
+            // Store DM channel → session mapping
+            db.run(
+                'INSERT INTO threads (thread_id, session_id, working_dir) VALUES (?, ?, ?)',
+                [dmChannelId, sessionId, workingDir]
+            );
+
+            log(`New DM session ${sessionId} for ${message.author.tag}`);
+
+            await claudeQueue.add('process', {
+                prompt: cleanedMessage,
+                threadId: dmChannelId,
+                sessionId,
+                resume: false,
+                userId: message.author.id,
+                username: message.author.tag,
+                workingDir,
+            });
+        }
+
+        return;
+    }
 
     // Middleware: Check allowlist (users, roles, channels)
     if (!checkAllowlist(message)) {
