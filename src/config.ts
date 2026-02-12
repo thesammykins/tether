@@ -81,6 +81,8 @@ const CONFIG_KEYS: Record<string, ConfigKeyMeta> = {
 
     // Features
     ENABLE_DMS: { section: 'features', default: 'false', description: 'Enable direct message support' },
+    FORUM_SESSIONS: { section: 'features', default: 'false', description: 'Use forum channel posts instead of text channel threads' },
+    FORUM_CHANNEL_ID: { section: 'features', default: '', description: 'Discord forum channel ID for session posts' },
 
     // Database
     DB_PATH: { section: 'database', default: './data/threads.db', description: 'SQLite database path' },

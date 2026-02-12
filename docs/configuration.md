@@ -111,6 +111,8 @@ tether config list
 | Key | Default | Description |
 |-----|---------|-------------|
 | `ENABLE_DMS` | `false` | Allow the bot to respond to direct messages |
+| `FORUM_SESSIONS` | `false` | Use forum channel posts instead of text channel threads for sessions |
+| `FORUM_CHANNEL_ID` | (empty) | Discord forum channel ID for session posts (required when `FORUM_SESSIONS=true`) |
 
 ### Database
 

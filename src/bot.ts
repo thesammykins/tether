@@ -16,6 +16,7 @@ import {
     TextChannel,
     DMChannel,
     ChannelType,
+    ForumChannel,
     Partials,
     ThreadAutoArchiveDuration,
     SlashCommandBuilder,
@@ -39,6 +40,10 @@ import { questionResponses, pendingTypedAnswers } from './api.js';
 
 // DM support - opt-in via env var (disabled by default for security)
 const ENABLE_DMS = process.env.ENABLE_DMS === 'true';
+
+// Forum session support - create sessions as forum posts instead of text threads
+const FORUM_SESSIONS = process.env.FORUM_SESSIONS === 'true';
+const FORUM_CHANNEL_ID = process.env.FORUM_CHANNEL_ID || '';
 
 // Allowed working directories (configurable via env, comma-separated)
 // If not set, any existing directory is allowed (backward compatible)
@@ -536,30 +541,57 @@ client.on(Events.MessageCreate, async (message: Message) => {
     let thread;
     let channelContext = '';
     try {
-        // Post status message in the channel
-        statusMessage = await (message.channel as TextChannel).send('Processing...');
+        if (FORUM_SESSIONS && FORUM_CHANNEL_ID) {
+            // Forum mode: create a forum post in the configured forum channel
+            const forumChannel = await client.channels.fetch(FORUM_CHANNEL_ID);
+            if (!forumChannel || forumChannel.type !== ChannelType.GuildForum) {
+                log(`FORUM_CHANNEL_ID ${FORUM_CHANNEL_ID} is not a forum channel`);
+                await message.reply('Forum channel is misconfigured. Check FORUM_CHANNEL_ID.');
+                return;
+            }
 
-        // Generate thread name from cleaned message content
-        const threadName = generateThreadName(cleanedMessage);
+            const threadName = generateThreadName(cleanedMessage);
 
-        // Create thread from the status message
-        thread = await statusMessage.startThread({
-            name: threadName,
-            autoArchiveDuration: ThreadAutoArchiveDuration.OneDay,
-        });
+            // Forum posts require an initial message (unlike text threads)
+            thread = await (forumChannel as ForumChannel).threads.create({
+                name: threadName,
+                autoArchiveDuration: ThreadAutoArchiveDuration.OneDay,
+                message: {
+                    content: `**${message.author.tag}:** ${cleanedMessage}`,
+                },
+            });
 
-        // Feature: Get channel context for new conversations
-        channelContext = await getChannelContext(message.channel as TextChannel);
-        if (channelContext) {
-            log(`Channel context: ${channelContext.slice(0, 100)}...`);
-        }
+            // Reply in the original channel with a link to the forum post
+            await message.reply(`📋 Session started: <#${thread.id}>`);
 
-        // Copy the original message content into the thread for context
-        // (excluding the bot mention and the status message)
-        const originalMessages = await message.channel.messages.fetch({ limit: 10 });
-        const userMessage = originalMessages.find(m => m.id === message.id);
-        if (userMessage) {
-            await thread.send(`**${message.author.tag}:** ${cleanedMessage}`);
+            // Get context from the source channel (not the forum)
+            channelContext = await getChannelContext(message.channel as TextChannel);
+            if (channelContext) {
+                log(`Channel context: ${channelContext.slice(0, 100)}...`);
+            }
+        } else {
+            // Default mode: create a text thread from a status message
+            statusMessage = await (message.channel as TextChannel).send('Processing...');
+
+            const threadName = generateThreadName(cleanedMessage);
+
+            thread = await statusMessage.startThread({
+                name: threadName,
+                autoArchiveDuration: ThreadAutoArchiveDuration.OneDay,
+            });
+
+            // Feature: Get channel context for new conversations
+            channelContext = await getChannelContext(message.channel as TextChannel);
+            if (channelContext) {
+                log(`Channel context: ${channelContext.slice(0, 100)}...`);
+            }
+
+            // Copy the original message content into the thread for context
+            const originalMessages = await message.channel.messages.fetch({ limit: 10 });
+            const userMessage = originalMessages.find(m => m.id === message.id);
+            if (userMessage) {
+                await thread.send(`**${message.author.tag}:** ${cleanedMessage}`);
+            }
         }
     } catch (error) {
         log(`Failed to create thread: ${error}`);
@@ -631,10 +663,23 @@ client.on(Events.MessageReactionAdd, async (reaction, user) => {
 
         log(`✅ reaction on last message in thread ${thread.id}`);
 
-        // Update thread starter message to "Done"
-        // The thread ID equals the starter message ID (thread was created from that message)
+        // Determine parent channel type for the correct "Done" update
         const parentChannel = await client.channels.fetch(parentChannelId);
-        if (parentChannel?.isTextBased()) {
+
+        if (parentChannel?.type === ChannelType.GuildForum) {
+            // Forum thread: edit the starter message inside the thread
+            try {
+                const starterMessage = await thread.fetchStarterMessage();
+                if (starterMessage) {
+                    await starterMessage.edit(`${starterMessage.content}\n\n✅ Done`);
+                    log(`Forum thread ${thread.id} marked as Done`);
+                }
+            } catch (error) {
+                log(`Failed to edit forum starter message: ${error}`);
+            }
+        } else if (parentChannel?.isTextBased()) {
+            // Text thread: edit the status message in the parent channel
+            // The thread ID equals the starter message ID (thread was created from that message)
             const starterMessage = await (parentChannel as TextChannel).messages.fetch(thread.id);
             await starterMessage.edit('✅ Done');
             log(`Thread ${thread.id} marked as Done`);
