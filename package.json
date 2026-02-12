@@ -1,6 +1,6 @@
 {
   "name": "@thesammykins/tether",
-  "version": "1.0.1",
+  "version": "1.1.0",
   "description": "Discord bot that bridges messages to AI agent sessions (Claude, OpenCode, Codex)",
   "license": "MIT",
   "author": "thesammykins",
@@ -36,6 +36,7 @@
     "src/",
     "bin/tether.ts",
     "index.ts",
+    "docs/",
     "README.md",
     "LICENSE",
     ".env.example"
