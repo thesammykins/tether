@@ -824,16 +824,39 @@ async function start() {
     const botScript = join(packageRoot, 'src', 'bot.ts');
     const workerScript = join(packageRoot, 'src', 'worker.ts');
 
+    // Load config store values into child process environment.
+    // Secrets are encrypted on disk — decrypt them so bot/worker can read
+    // DISCORD_BOT_TOKEN etc. from process.env as they expect.
+    const childEnv: Record<string, string | undefined> = { ...process.env };
+    const prefs = readPreferences();
+    for (const [key, value] of Object.entries(prefs)) {
+        if (!childEnv[key]) childEnv[key] = value;
+    }
+    if (hasSecrets()) {
+        const pw = await promptPassword('Encryption password: ');
+        try {
+            const secrets = readSecrets(pw);
+            for (const [key, value] of Object.entries(secrets)) {
+                if (!childEnv[key]) childEnv[key] = value;
+            }
+        } catch {
+            console.error('Wrong password or corrupted secrets file.');
+            process.exit(1);
+        }
+    }
+
     // Start bot
     const bot = spawn(['bun', 'run', botScript], {
         stdout: 'inherit',
         stderr: 'inherit',
+        env: childEnv,
     });
 
     // Start worker
     const worker = spawn(['bun', 'run', workerScript], {
         stdout: 'inherit',
         stderr: 'inherit',
+        env: childEnv,
     });
 
     // Save PIDs
