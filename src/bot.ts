@@ -37,7 +37,6 @@ import {
     setThreadProject,
     listProjects as dbListProjects,
 } from './db.js';
-import type { Project } from './db.js';
 import { migrateWorkingDirToProject } from './config.js';
 import { startApiServer, buttonHandlers } from './api.js';
 import { checkAllowlist } from './middleware/allowlist.js';

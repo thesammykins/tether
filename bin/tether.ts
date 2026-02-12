@@ -676,7 +676,6 @@ async function updateState() {
 
 async function projectCommand() {
     const subcommand = args[0];
-    const API_PORT = process.env.TETHER_API_PORT ? parseInt(process.env.TETHER_API_PORT) : 2643;
 
     switch (subcommand) {
         case 'add': {

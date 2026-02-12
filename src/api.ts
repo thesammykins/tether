@@ -13,7 +13,6 @@ import {
     listProjects, createProject, deleteProject, setProjectDefault,
     getProject,
 } from './db.js';
-import type { Project } from './db.js';
 
 const log = (msg: string) => process.stdout.write(`[api] ${msg}\n`);
 

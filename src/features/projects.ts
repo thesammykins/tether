@@ -13,7 +13,6 @@ import {
     listProjects,
     setProjectDefault,
     setChannelProject,
-    getChannelProject,
     db,
 } from '../db.js';
 import type { Project } from '../db.js';
