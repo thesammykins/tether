@@ -1,4 +1,5 @@
-import { describe, it, expect, mock, beforeEach } from 'bun:test';
+import { describe, it, expect, mock, beforeEach, afterEach } from 'bun:test';
+import { join } from 'path';
 import { OpenCodeAdapter } from '../../src/adapters/opencode.js';
 
 describe('OpenCodeAdapter', () => {
@@ -8,22 +9,42 @@ describe('OpenCodeAdapter', () => {
     adapter = new OpenCodeAdapter();
   });
 
+  afterEach(() => {
+    delete process.env.OPENCODE_BIN;
+  });
+
   it('should have name "opencode"', () => {
     expect(adapter.name).toBe('opencode');
   });
 
   it('should construct correct CLI args for new session', async () => {
-    const mockSpawn = mock((args: string[], options: any) => ({
-      stdout: {
-        [Symbol.asyncIterator]: async function* () {
-          yield new TextEncoder().encode(JSON.stringify({ output: 'test response', sessionId: 'auto-gen-123' }));
+    const mockSpawn = mock((args: string[], options: any) => {
+      if (args[0] === 'which' || args[0] === 'where.exe') {
+        return {
+          stdout: {
+            [Symbol.asyncIterator]: async function* () {
+              yield new TextEncoder().encode('/usr/local/bin/opencode\n');
+            },
+          },
+          stderr: {
+            [Symbol.asyncIterator]: async function* () {},
+          },
+          exited: Promise.resolve(0),
+        };
+      }
+
+      return {
+        stdout: {
+          [Symbol.asyncIterator]: async function* () {
+            yield new TextEncoder().encode(JSON.stringify({ output: 'test response', sessionId: 'auto-gen-123' }));
+          },
         },
-      },
-      stderr: {
-        [Symbol.asyncIterator]: async function* () {},
-      },
-      exited: Promise.resolve(0),
-    }));
+        stderr: {
+          [Symbol.asyncIterator]: async function* () {},
+        },
+        exited: Promise.resolve(0),
+      };
+    });
 
     const originalSpawn = Bun.spawn;
     (Bun as any).spawn = mockSpawn;
@@ -36,9 +57,11 @@ describe('OpenCodeAdapter', () => {
       });
 
       expect(mockSpawn).toHaveBeenCalled();
-      const [args] = mockSpawn.mock.calls[0];
+      const [args] = mockSpawn.mock.calls.findLast((call: any[]) =>
+        Array.isArray(call[0]) && call[0].includes('run')
+      ) ?? [[]];
 
-      expect(args).toContain('opencode');
+      expect(args[0]).toContain('opencode');
       expect(args).toContain('run');
       expect(args).toContain('--format');
       expect(args).toContain('json');
@@ -50,17 +73,33 @@ describe('OpenCodeAdapter', () => {
   });
 
   it('should construct correct CLI args for resume session', async () => {
-    const mockSpawn = mock((args: string[], options: any) => ({
-      stdout: {
-        [Symbol.asyncIterator]: async function* () {
-          yield new TextEncoder().encode(JSON.stringify({ output: 'resumed response' }));
+    const mockSpawn = mock((args: string[], options: any) => {
+      if (args[0] === 'which' || args[0] === 'where.exe') {
+        return {
+          stdout: {
+            [Symbol.asyncIterator]: async function* () {
+              yield new TextEncoder().encode('/usr/local/bin/opencode\n');
+            },
+          },
+          stderr: {
+            [Symbol.asyncIterator]: async function* () {},
+          },
+          exited: Promise.resolve(0),
+        };
+      }
+
+      return {
+        stdout: {
+          [Symbol.asyncIterator]: async function* () {
+            yield new TextEncoder().encode(JSON.stringify({ output: 'resumed response' }));
+          },
         },
-      },
-      stderr: {
-        [Symbol.asyncIterator]: async function* () {},
-      },
-      exited: Promise.resolve(0),
-    }));
+        stderr: {
+          [Symbol.asyncIterator]: async function* () {},
+        },
+        exited: Promise.resolve(0),
+      };
+    });
 
     const originalSpawn = Bun.spawn;
     (Bun as any).spawn = mockSpawn;
@@ -72,7 +111,9 @@ describe('OpenCodeAdapter', () => {
         resume: true,
       });
 
-      const [args] = mockSpawn.mock.calls[0];
+      const [args] = mockSpawn.mock.calls.findLast((call: any[]) =>
+        Array.isArray(call[0]) && call[0].includes('run')
+      ) ?? [[]];
 
       expect(args).toContain('--session');
       expect(args).toContain('existing-session');
@@ -82,17 +123,33 @@ describe('OpenCodeAdapter', () => {
   });
 
   it('should use working directory when provided', async () => {
-    const mockSpawn = mock((args: string[], options: any) => ({
-      stdout: {
-        [Symbol.asyncIterator]: async function* () {
-          yield new TextEncoder().encode(JSON.stringify({ output: 'response' }));
+    const mockSpawn = mock((args: string[], options: any) => {
+      if (args[0] === 'which' || args[0] === 'where.exe') {
+        return {
+          stdout: {
+            [Symbol.asyncIterator]: async function* () {
+              yield new TextEncoder().encode('/usr/local/bin/opencode\n');
+            },
+          },
+          stderr: {
+            [Symbol.asyncIterator]: async function* () {},
+          },
+          exited: Promise.resolve(0),
+        };
+      }
+
+      return {
+        stdout: {
+          [Symbol.asyncIterator]: async function* () {
+            yield new TextEncoder().encode(JSON.stringify({ output: 'response' }));
+          },
         },
-      },
-      stderr: {
-        [Symbol.asyncIterator]: async function* () {},
-      },
-      exited: Promise.resolve(0),
-    }));
+        stderr: {
+          [Symbol.asyncIterator]: async function* () {},
+        },
+        exited: Promise.resolve(0),
+      };
+    });
 
     const originalSpawn = Bun.spawn;
     (Bun as any).spawn = mockSpawn;
@@ -105,7 +162,9 @@ describe('OpenCodeAdapter', () => {
         workingDir: '/custom/path',
       });
 
-      const [args, options] = mockSpawn.mock.calls[0];
+      const [args, options] = mockSpawn.mock.calls.findLast((call: any[]) =>
+        Array.isArray(call[0]) && call[0].includes('run')
+      ) ?? [[], {}];
       
       expect(args).toContain('--cwd');
       expect(args).toContain('/custom/path');
@@ -116,17 +175,33 @@ describe('OpenCodeAdapter', () => {
   });
 
   it('should parse JSON output and extract response', async () => {
-    const mockSpawn = mock(() => ({
-      stdout: {
-        [Symbol.asyncIterator]: async function* () {
-          yield new TextEncoder().encode(JSON.stringify({ output: 'parsed response' }));
+    const mockSpawn = mock((args: string[], options: any) => {
+      if (args[0] === 'which' || args[0] === 'where.exe') {
+        return {
+          stdout: {
+            [Symbol.asyncIterator]: async function* () {
+              yield new TextEncoder().encode('/usr/local/bin/opencode\n');
+            },
+          },
+          stderr: {
+            [Symbol.asyncIterator]: async function* () {},
+          },
+          exited: Promise.resolve(0),
+        };
+      }
+
+      return {
+        stdout: {
+          [Symbol.asyncIterator]: async function* () {
+            yield new TextEncoder().encode(JSON.stringify({ output: 'parsed response' }));
+          },
         },
-      },
-      stderr: {
-        [Symbol.asyncIterator]: async function* () {},
-      },
-      exited: Promise.resolve(0),
-    }));
+        stderr: {
+          [Symbol.asyncIterator]: async function* () {},
+        },
+        exited: Promise.resolve(0),
+      };
+    });
 
     const originalSpawn = Bun.spawn;
     (Bun as any).spawn = mockSpawn;
@@ -144,14 +219,12 @@ describe('OpenCodeAdapter', () => {
     }
   });
 
-  it('should extract auto-generated session ID from response', async () => {
-    const mockSpawn = mock(() => ({
+  it('should prefer OPENCODE_BIN when set', async () => {
+    process.env.OPENCODE_BIN = '/custom/opencode';
+    const mockSpawn = mock((args: string[], options: any) => ({
       stdout: {
         [Symbol.asyncIterator]: async function* () {
-          yield new TextEncoder().encode(JSON.stringify({ 
-            output: 'response',
-            sessionId: 'auto-generated-456'
-          }));
+          yield new TextEncoder().encode(JSON.stringify({ output: 'env response' }));
         },
       },
       stderr: {
@@ -159,6 +232,58 @@ describe('OpenCodeAdapter', () => {
       },
       exited: Promise.resolve(0),
     }));
+
+    const originalSpawn = Bun.spawn;
+    (Bun as any).spawn = mockSpawn;
+
+    try {
+      await adapter.spawn({
+        prompt: 'test',
+        sessionId: 'sess',
+        resume: false,
+      });
+
+      const [args] = mockSpawn.mock.calls.findLast((call: any[]) =>
+        Array.isArray(call[0]) && call[0][0] === '/custom/opencode'
+      ) ?? [[]];
+
+      expect(args[0]).toBe('/custom/opencode');
+    } finally {
+      (Bun as any).spawn = originalSpawn;
+    }
+  });
+
+  it('should extract auto-generated session ID from response', async () => {
+    const mockSpawn = mock((args: string[], options: any) => {
+      if (args[0] === 'which' || args[0] === 'where.exe') {
+        return {
+          stdout: {
+            [Symbol.asyncIterator]: async function* () {
+              yield new TextEncoder().encode('/usr/local/bin/opencode\n');
+            },
+          },
+          stderr: {
+            [Symbol.asyncIterator]: async function* () {},
+          },
+          exited: Promise.resolve(0),
+        };
+      }
+
+      return {
+        stdout: {
+          [Symbol.asyncIterator]: async function* () {
+            yield new TextEncoder().encode(JSON.stringify({ 
+              output: 'response',
+              sessionId: 'auto-generated-456'
+            }));
+          },
+        },
+        stderr: {
+          [Symbol.asyncIterator]: async function* () {},
+        },
+        exited: Promise.resolve(0),
+      };
+    });
 
     const originalSpawn = Bun.spawn;
     (Bun as any).spawn = mockSpawn;
@@ -177,17 +302,33 @@ describe('OpenCodeAdapter', () => {
   });
 
   it('should handle non-JSON output', async () => {
-    const mockSpawn = mock(() => ({
-      stdout: {
-        [Symbol.asyncIterator]: async function* () {
-          yield new TextEncoder().encode('plain text response');
+    const mockSpawn = mock((args: string[], options: any) => {
+      if (args[0] === 'which' || args[0] === 'where.exe') {
+        return {
+          stdout: {
+            [Symbol.asyncIterator]: async function* () {
+              yield new TextEncoder().encode('/usr/local/bin/opencode\n');
+            },
+          },
+          stderr: {
+            [Symbol.asyncIterator]: async function* () {},
+          },
+          exited: Promise.resolve(0),
+        };
+      }
+
+      return {
+        stdout: {
+          [Symbol.asyncIterator]: async function* () {
+            yield new TextEncoder().encode('plain text response');
+          },
         },
-      },
-      stderr: {
-        [Symbol.asyncIterator]: async function* () {},
-      },
-      exited: Promise.resolve(0),
-    }));
+        stderr: {
+          [Symbol.asyncIterator]: async function* () {},
+        },
+        exited: Promise.resolve(0),
+      };
+    });
 
     const originalSpawn = Bun.spawn;
     (Bun as any).spawn = mockSpawn;
@@ -206,17 +347,33 @@ describe('OpenCodeAdapter', () => {
   });
 
   it('should throw error on non-zero exit code', async () => {
-    const mockSpawn = mock(() => ({
-      stdout: {
-        [Symbol.asyncIterator]: async function* () {},
-      },
-      stderr: {
-        [Symbol.asyncIterator]: async function* () {
-          yield new TextEncoder().encode('error message');
+    const mockSpawn = mock((args: string[], options: any) => {
+      if (args[0] === 'which' || args[0] === 'where.exe') {
+        return {
+          stdout: {
+            [Symbol.asyncIterator]: async function* () {
+              yield new TextEncoder().encode('/usr/local/bin/opencode\n');
+            },
+          },
+          stderr: {
+            [Symbol.asyncIterator]: async function* () {},
+          },
+          exited: Promise.resolve(0),
+        };
+      }
+
+      return {
+        stdout: {
+          [Symbol.asyncIterator]: async function* () {},
         },
-      },
-      exited: Promise.resolve(1),
-    }));
+        stderr: {
+          [Symbol.asyncIterator]: async function* () {
+            yield new TextEncoder().encode('error message');
+          },
+        },
+        exited: Promise.resolve(1),
+      };
+    });
 
     const originalSpawn = Bun.spawn;
     (Bun as any).spawn = mockSpawn;
@@ -232,5 +389,36 @@ describe('OpenCodeAdapter', () => {
     } finally {
       (Bun as any).spawn = originalSpawn;
     }
+  });
+
+  it('should provide helpful diagnostics when spawn fails', async () => {
+    process.env.OPENCODE_BIN = join(process.cwd(), 'tmp', 'missing-opencode-binary');
+    const mockSpawn = mock(() => {
+      const err = new Error('ENOENT: no such file or directory, posix_spawn');
+      (err as any).code = 'ENOENT';
+      throw err;
+    });
+
+    const originalSpawn = Bun.spawn;
+    (Bun as any).spawn = mockSpawn;
+
+    let caught: unknown;
+    try {
+      await adapter.spawn({
+        prompt: 'test',
+        sessionId: 'sess',
+        resume: false,
+      });
+    } catch (error) {
+      caught = error;
+    } finally {
+      (Bun as any).spawn = originalSpawn;
+    }
+
+    expect(caught).toBeInstanceOf(Error);
+    const message = (caught as Error).message;
+    expect(message).toContain('OpenCode CLI failed to start');
+    expect(message).toContain('OPENCODE_BIN');
+    expect(message).toContain('Binary not found at the resolved path');
   });
 });

@@ -73,6 +73,9 @@ tether config list
 |-----|---------|-------------|
 | `AGENT_TYPE` | `claude` | Agent backend: `claude`, `opencode`, `codex` |
 | `CLAUDE_WORKING_DIR` | cwd | Default working directory for agent sessions |
+| `CLAUDE_BIN` | (empty) | Override path to Claude CLI binary |
+| `OPENCODE_BIN` | (empty) | Override path to OpenCode CLI binary |
+| `CODEX_BIN` | (empty) | Override path to Codex CLI binary |
 
 ### Server
 

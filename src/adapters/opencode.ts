@@ -1,4 +1,7 @@
 import type { AgentAdapter, SpawnOptions, SpawnResult } from './types.js';
+import type { BinarySource } from './resolve-binary.js';
+import { getHomeCandidate, getSystemBinaryCandidates, resolveBinary, resolveNpmGlobalBinary, normalizeBinarySource } from './resolve-binary.js';
+import { formatSpawnError } from './spawn-diagnostics.js';
 
 /**
  * OpenCode CLI Adapter
@@ -12,13 +15,68 @@ import type { AgentAdapter, SpawnOptions, SpawnResult } from './types.js';
  * - `--cwd <path>`: Set working directory
  */
 
+// Cache resolved binary path
+let cachedBinaryPath: string | null = null;
+let cachedBinarySource: BinarySource | 'unknown' = 'unknown';
+
 export class OpenCodeAdapter implements AgentAdapter {
   readonly name = 'opencode';
+
+  private binarySource: BinarySource | 'unknown' = 'unknown';
+
+  private async getBinaryPath(): Promise<string> {
+    const envValue = process.env.OPENCODE_BIN;
+    if (envValue) {
+      if (cachedBinaryPath !== envValue) {
+        cachedBinaryPath = envValue;
+        cachedBinarySource = 'env';
+        console.log(`[opencode] Binary resolved (env): ${envValue}`);
+      }
+      this.binarySource = cachedBinarySource;
+      return cachedBinaryPath;
+    }
+
+    if (cachedBinaryPath) {
+      this.binarySource = cachedBinarySource;
+      return cachedBinaryPath;
+    }
+
+    const resolved = await resolveBinary({
+      name: 'opencode',
+      candidates: [
+        ...getSystemBinaryCandidates('opencode'),
+        getHomeCandidate('.opencode', 'bin', 'opencode'),
+      ],
+      windowsCandidates: [getHomeCandidate('.opencode', 'bin', 'opencode.exe')],
+    });
+
+    if (resolved) {
+      cachedBinaryPath = resolved.path;
+      cachedBinarySource = normalizeBinarySource(resolved.source);
+      this.binarySource = cachedBinarySource;
+      console.log(`[opencode] Binary resolved (${resolved.source}): ${resolved.path}`);
+      return cachedBinaryPath;
+    }
+
+    const npmBinary = await resolveNpmGlobalBinary('opencode');
+    if (npmBinary) {
+      cachedBinaryPath = npmBinary;
+      cachedBinarySource = 'npm';
+      this.binarySource = cachedBinarySource;
+      console.log(`[opencode] Binary resolved (npm): ${npmBinary}`);
+      return cachedBinaryPath;
+    }
+
+    throw new Error(
+      'OpenCode CLI not found. Install it or set OPENCODE_BIN to the binary path.'
+    );
+  }
 
   async spawn(options: SpawnOptions): Promise<SpawnResult> {
     const { prompt, sessionId, resume, workingDir } = options;
 
-    const args = ['opencode', 'run'];
+    const binaryPath = await this.getBinaryPath();
+    const args = [binaryPath, 'run'];
 
     // Format as JSON for structured output
     args.push('--format', 'json');
@@ -38,16 +96,30 @@ export class OpenCodeAdapter implements AgentAdapter {
     args.push(prompt);
 
     // Spawn the process
-    const proc = Bun.spawn(args, {
-      cwd: workingDir || process.cwd(),
-      env: process.env,
-      stdout: 'pipe',
-      stderr: 'pipe',
-    });
+    const cwd = workingDir || process.cwd();
+    let proc: ReturnType<typeof Bun.spawn>;
+    try {
+      proc = Bun.spawn(args, {
+        cwd,
+        env: process.env,
+        stdout: 'pipe',
+        stderr: 'pipe',
+      });
+    } catch (error) {
+      throw formatSpawnError({
+        adapterName: 'OpenCode',
+        binaryPath,
+        binarySource: this.binarySource,
+        envVar: 'OPENCODE_BIN',
+        workingDir: cwd,
+        args,
+        error,
+      });
+    }
 
     // Collect output
-    const stdout = await new Response(proc.stdout).text();
-    const stderr = await new Response(proc.stderr).text();
+    const stdout = await new Response(proc.stdout as ReadableStream<Uint8Array>).text();
+    const stderr = await new Response(proc.stderr as ReadableStream<Uint8Array>).text();
 
     // Wait for process to exit
     const exitCode = await proc.exited;

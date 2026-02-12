@@ -58,6 +58,9 @@ const CONFIG_KEYS: Record<string, ConfigKeyMeta> = {
     // Agent
     AGENT_TYPE: { section: 'agent', default: 'claude', description: 'Agent type (claude, opencode, codex)' },
     CLAUDE_WORKING_DIR: { section: 'agent', default: '', description: 'Default working directory for agent sessions' },
+    CLAUDE_BIN: { section: 'agent', default: '', description: 'Override path to Claude CLI binary' },
+    OPENCODE_BIN: { section: 'agent', default: '', description: 'Override path to OpenCode CLI binary' },
+    CODEX_BIN: { section: 'agent', default: '', description: 'Override path to Codex CLI binary' },
 
     // Server
     TETHER_API_HOST: { section: 'server', default: '127.0.0.1', description: 'API server bind address' },

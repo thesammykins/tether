@@ -52,6 +52,13 @@ claude --print --output-format json --session-id <id> -p "<prompt>"
 claude --print --output-format json --resume <id> -p "<prompt>"
 ```
 
+If the `claude` binary is not on PATH (common for service/daemon installs),
+set an explicit path override:
+
+```bash
+tether config set CLAUDE_BIN /full/path/to/claude
+```
+
 Key flags:
 - `--print` — Non-interactive mode, returns output to stdout
 - `--session-id` / `--resume` — Session persistence across messages in the same thread
@@ -109,6 +116,13 @@ opencode run --format json "<prompt>"
 opencode run --format json --session <id> "<prompt>"
 ```
 
+If the `opencode` binary is not on PATH (common for service/daemon installs),
+set an explicit path override:
+
+```bash
+tether config set OPENCODE_BIN /full/path/to/opencode
+```
+
 Key flags:
 - `run` — Execute a prompt
 - `--format json` — Structured output
@@ -150,6 +164,13 @@ Tether spawns Codex with:
 codex exec --json "<prompt>"
 # Follow-ups:
 codex exec resume <sessionId> --json "<prompt>"
+```
+
+If the `codex` binary is not on PATH (common for service/daemon installs),
+set an explicit path override:
+
+```bash
+tether config set CODEX_BIN /full/path/to/codex
 ```
 
 Key flags:

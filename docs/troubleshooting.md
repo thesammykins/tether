@@ -9,7 +9,7 @@
 | `DisallowedIntents` error | Enable the required intents in Developer Portal → Bot tab (see [Discord Setup](discord-setup.md#3-configure-privileged-intents)) |
 | Bot doesn't receive DMs | Set `ENABLE_DMS=true`: `tether config set ENABLE_DMS true` |
 | "Rate limit exceeded" | Adjust `RATE_LIMIT_REQUESTS` / `RATE_LIMIT_WINDOW_MS` (see [Configuration](configuration.md#limits)) |
-| Agent command not found | Ensure `claude`/`opencode`/`codex` is installed and on PATH (see [Agent Setup](agents.md)) |
+| Agent command not found | Ensure `claude`/`opencode`/`codex` is installed and on PATH. If running as a service, set `CLAUDE_BIN` / `OPENCODE_BIN` / `CODEX_BIN` to an absolute path (see [Agent Setup](agents.md)) |
 | Redis connection refused | Start Redis: `redis-server` (or `brew services start redis` on macOS) |
 | Bot can't create threads | Check bot has **Create Public Threads** permission in your server |
 | `tether start` hangs / does nothing | Check for a stale PID file: `rm -f .tether.pid` then try again |
@@ -55,6 +55,7 @@ tail -f /tmp/tether.log
 | Problem | Solution |
 |---------|----------|
 | `opencode: command not found` | Install: `curl -fsSL https://opencode.ai/install \| bash` |
+| `opencode` installed but not found | Set `OPENCODE_BIN` to the full path (e.g. `~/.opencode/bin/opencode`) and restart Tether |
 | API key not set | Set your provider key: `export ANTHROPIC_API_KEY=sk-ant-...` or `export OPENAI_API_KEY=sk-...` |
 
 ### Codex
