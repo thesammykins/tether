@@ -64,7 +64,34 @@ The bot needs these permissions in your server:
 4. Copy the generated URL and open it in your browser
 5. Select the server you want to add the bot to and click **Authorize**
 
-## 6. Enable DMs (Optional)
+## 6. Use Forum Channels (Optional)
+
+By default, Tether creates threads in the channel where the bot is mentioned. If you prefer organized, searchable forum posts instead:
+
+1. Create a **Forum Channel** in your Discord server (Server Settings → Channels → Create Channel → Forum)
+2. Configure Tether to use it:
+   ```bash
+   tether config set FORUM_SESSIONS true
+   tether config set FORUM_CHANNEL_ID 123456789012345678
+   ```
+3. Restart Tether (`tether stop && tether start`)
+
+### Forum Behavior
+
+- When someone `@mentions` the bot in any channel, a new **forum post** is created in your forum channel instead of a thread
+- The bot replies in the original channel with a link to the forum post
+- Follow-up messages in the forum post continue the same session — no `@mention` needed
+- Session reuse, pause/resume, BRB, and ✅ completion all work the same as regular threads
+- The forum post title is auto-generated from the first prompt
+
+### Finding the Forum Channel ID
+
+1. Enable **Developer Mode** (see [Finding Discord IDs](#finding-discord-ids) below)
+2. Right-click the forum channel → **Copy ID**
+
+> **Note:** The bot needs **Send Messages**, **Create Posts**, and **Send Messages in Threads** permissions in the forum channel.
+
+## 7. Enable DMs (Optional)
 
 If you want users to DM the bot directly:
 
@@ -82,7 +109,7 @@ If you want users to DM the bot directly:
 - Send `!reset` in DMs to start a fresh session
 - Only `ALLOWED_USERS` is checked for DMs (roles and channels don't apply)
 
-## 7. Start and Test
+## 8. Start and Test
 
 ```bash
 # Start Redis (if not already running)

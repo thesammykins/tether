@@ -37,6 +37,20 @@ The bot handles Discord events, the queue provides durability and backpressure, 
 6. Adapter runs the CLI (`claude`/`opencode`/`codex`) with the prompt
 7. Worker posts the agent's response back to the Discord thread
 
+### Forum Channels
+
+When `FORUM_SESSIONS=true` and `FORUM_CHANNEL_ID` is set:
+
+1. User `@mentions` the bot in any channel
+2. Bot runs the middleware pipeline (allowlist → rate limiter → pause check)
+3. Bot creates a **forum post** in the configured forum channel (instead of a thread)
+4. Bot replies in the original channel with a link to the forum post
+5. Bot adds a job to the BullMQ queue
+6. Worker posts the response in the forum post
+7. Follow-up messages in the forum post continue the same session
+
+Forum threads use the same `thread_id → session_id` DB mapping as regular threads — no schema differences.
+
 ### Direct Messages
 
 1. User sends a message to the bot in DMs (no `@mention` needed)

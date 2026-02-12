@@ -114,6 +114,17 @@ tether config list
 | `FORUM_SESSIONS` | `false` | Use forum channel posts instead of text channel threads for sessions |
 | `FORUM_CHANNEL_ID` | (empty) | Discord forum channel ID for session posts (required when `FORUM_SESSIONS=true`) |
 
+#### Forum Sessions
+
+By default, Tether creates threads in the channel where the bot is mentioned. When forum sessions are enabled, it creates forum posts in a dedicated forum channel instead — useful for keeping conversations organized and searchable.
+
+```bash
+tether config set FORUM_SESSIONS true
+tether config set FORUM_CHANNEL_ID 123456789012345678
+```
+
+Both keys are required. See [Discord Setup — Forum Channels](discord-setup.md#6-use-forum-channels-optional) for the full setup guide.
+
 ### Database
 
 | Key | Default | Description |
