@@ -9,12 +9,114 @@ import type { AgentAdapter, SpawnOptions, SpawnResult } from './types.js';
  * - `--print`: Non-interactive mode, returns output
  * - `--session-id UUID`: Set session ID for new sessions
  * - `--resume UUID`: Resume an existing session (for follow-ups)
+ * - `--continue` / `-c`: Resume latest session in directory (fallback)
  * - `--append-system-prompt`: Inject context that survives compaction
  * - `-p "prompt"`: The actual prompt to send
  * - `--output-format json`: Structured output (if supported)
+ * 
+ * Known Issues:
+ * - GitHub Issue #5012: `--resume` was broken in v1.0.67
+ * - Sessions are directory-scoped; must resume from same cwd
+ * - `--continue` is preferred fallback when `--resume` fails
  */
 
 const TIMEZONE = process.env.TZ || 'UTC';
+const KNOWN_BUGGY_VERSIONS = ['1.0.67'];
+
+// Cache resolved binary path
+let cachedBinaryPath: string | null = null;
+
+/**
+ * Resolve the Claude CLI binary path.
+ * Tries `which claude` (macOS/Linux) or `where.exe claude` (Windows),
+ * then falls back to checking `npx @anthropic-ai/claude-code` availability.
+ */
+async function getClaudeBinaryPath(): Promise<string> {
+  if (cachedBinaryPath) {
+    return cachedBinaryPath;
+  }
+
+  const isWindows = process.platform === 'win32';
+  const whichCommand = isWindows ? 'where.exe' : 'which';
+
+  try {
+    const proc = Bun.spawn([whichCommand, 'claude'], {
+      stdout: 'pipe',
+      stderr: 'pipe',
+    });
+
+    const stdout = await new Response(proc.stdout).text();
+    const exitCode = await proc.exited;
+
+    if (exitCode === 0 && stdout.trim()) {
+      cachedBinaryPath = 'claude';
+      console.log(`[claude] Binary found at: ${stdout.trim()}`);
+      return cachedBinaryPath;
+    }
+  } catch (err) {
+    // Fall through to npx check
+  }
+
+  // Try npx fallback
+  try {
+    const proc = Bun.spawn(['npx', '--version'], {
+      stdout: 'pipe',
+      stderr: 'pipe',
+    });
+
+    const exitCode = await proc.exited;
+
+    if (exitCode === 0) {
+      cachedBinaryPath = 'npx';
+      console.log('[claude] Binary not in PATH, will use: npx @anthropic-ai/claude-code');
+      return cachedBinaryPath;
+    }
+  } catch (err) {
+    // Fall through to error
+  }
+
+  throw new Error(
+    'Claude CLI not found. Install with: npm install -g @anthropic-ai/claude-code'
+  );
+}
+
+/**
+ * Get the Claude CLI version.
+ * Runs `claude --version` and parses the output.
+ */
+async function getClaudeVersion(binaryPath: string): Promise<string> {
+  const args = binaryPath === 'npx'
+    ? ['npx', '@anthropic-ai/claude-code', '--version']
+    : [binaryPath, '--version'];
+
+  try {
+    const proc = Bun.spawn(args, {
+      stdout: 'pipe',
+      stderr: 'pipe',
+    });
+
+    const stdout = await new Response(proc.stdout).text();
+    const exitCode = await proc.exited;
+
+    if (exitCode === 0) {
+      const version = stdout.trim();
+      console.log(`[claude] CLI version: ${version}`);
+
+      // Warn if known buggy version
+      if (KNOWN_BUGGY_VERSIONS.some((v) => version.includes(v))) {
+        console.warn(
+          `[claude] WARNING: Version ${version} has known issues with --resume (GitHub #5012)`
+        );
+      }
+
+      return version;
+    }
+  } catch (err) {
+    console.warn('[claude] Could not determine CLI version:', err);
+  }
+
+  return 'unknown';
+}
 
 function getDatetimeContext(): string {
   const now = new Date();
@@ -38,8 +140,35 @@ export class ClaudeAdapter implements AgentAdapter {
 
     const cwd = workingDir || process.env.CLAUDE_WORKING_DIR || process.cwd();
 
+    // Resolve binary path and get version
+    const binaryPath = await getClaudeBinaryPath();
+    await getClaudeVersion(binaryPath);
+
     // Build CLI arguments
-    const args = ['claude'];
+    const args = this.buildArgs(binaryPath, options);
+
+    console.log('[claude] Spawning with args:', args);
+    console.log('[claude] Working directory:', cwd);
+
+    // Spawn the process
+    const result = await this.spawnProcess(args, cwd, sessionId, resume);
+
+    return result;
+  }
+
+  /**
+   * Build CLI arguments based on options.
+   */
+  private buildArgs(binaryPath: string, options: SpawnOptions): string[] {
+    const { prompt, sessionId, resume, systemPrompt } = options;
+
+    const args: string[] = [];
+
+    if (binaryPath === 'npx') {
+      args.push('npx', '@anthropic-ai/claude-code');
+    } else {
+      args.push(binaryPath);
+    }
 
     // Non-interactive mode
     args.push('--print');
@@ -67,8 +196,19 @@ export class ClaudeAdapter implements AgentAdapter {
     // The actual prompt
     args.push('-p', prompt);
 
-    // Spawn the process
-    const proc = Bun.spawn(args, {
+    return args;
+  }
+
+  /**
+   * Spawn the Claude process and handle fallback for resume failures.
+   */
+  private async spawnProcess(
+    args: string[],
+    cwd: string,
+    sessionId: string,
+    resume: boolean
+  ): Promise<SpawnResult> {
+    let proc = Bun.spawn(args, {
       cwd,
       env: {
         ...process.env,
@@ -79,11 +219,61 @@ export class ClaudeAdapter implements AgentAdapter {
     });
 
     // Collect output
-    const stdout = await new Response(proc.stdout).text();
-    const stderr = await new Response(proc.stderr).text();
+    let stdout = await new Response(proc.stdout).text();
+    let stderr = await new Response(proc.stderr).text();
 
     // Wait for process to exit
-    const exitCode = await proc.exited;
+    let exitCode = await proc.exited;
+
+    console.log('[claude] Exit code:', exitCode);
+    if (stderr) {
+      console.log('[claude] Stderr:', stderr);
+    }
+
+    // Handle --resume fallback
+    if (
+      resume &&
+      exitCode !== 0 &&
+      (stderr.includes('No conversation found') || stderr.includes('Session not found'))
+    ) {
+      console.log(
+        `[claude] --resume failed for ${sessionId}, falling back to --continue`
+      );
+
+      // Rebuild args with --continue instead of --resume
+      const continueArgs = args.map((arg, i) => {
+        if (arg === '--resume') {
+          return '--continue';
+        }
+        // Skip the session ID that follows --resume
+        if (i > 0 && args[i - 1] === '--resume') {
+          return null;
+        }
+        return arg;
+      }).filter((arg): arg is string => arg !== null);
+
+      console.log('[claude] Retrying with args:', continueArgs);
+
+      // Retry with --continue
+      proc = Bun.spawn(continueArgs, {
+        cwd,
+        env: {
+          ...process.env,
+          TZ: TIMEZONE,
+        },
+        stdout: 'pipe',
+        stderr: 'pipe',
+      });
+
+      stdout = await new Response(proc.stdout).text();
+      stderr = await new Response(proc.stderr).text();
+      exitCode = await proc.exited;
+
+      console.log('[claude] Fallback exit code:', exitCode);
+      if (stderr) {
+        console.log('[claude] Fallback stderr:', stderr);
+      }
+    }
 
     if (exitCode !== 0) {
       throw new Error(`Claude CLI failed (exit ${exitCode}): ${stderr || 'Unknown error'}`);

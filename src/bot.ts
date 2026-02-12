@@ -36,6 +36,7 @@ import { generateThreadName } from './features/thread-naming.js';
 import { checkSessionLimits } from './features/session-limits.js';
 import { handlePauseResume } from './features/pause-resume.js';
 import { isBrbMessage, isBackMessage, setBrb, setBack } from './features/brb.js';
+import { listSessions, formatAge } from './features/sessions.js';
 import { questionResponses, pendingTypedAnswers } from './api.js';
 
 // DM support - opt-in via env var (disabled by default for security)
@@ -146,24 +147,43 @@ client.once(Events.ClientReady, async (c) => {
     const existingCommands = await c.application?.commands.fetch();
     const cordCommand = existingCommands?.find(cmd => cmd.name === 'cord');
 
-    if (!cordCommand) {
-        const command = new SlashCommandBuilder()
-            .setName('cord')
-            .setDescription('Configure Cord bot')
-            .addSubcommand(sub =>
-                sub.setName('config')
-                   .setDescription('Configure channel settings')
-                   .addStringOption(opt =>
-                       opt.setName('dir')
-                          .setDescription('Working directory for Claude in this channel')
-                          .setRequired(true)
-                   )
-            );
+    // Always re-register to pick up new subcommands
+    const command = new SlashCommandBuilder()
+        .setName('cord')
+        .setDescription('Configure Cord bot')
+        .addSubcommand(sub =>
+            sub.setName('config')
+               .setDescription('Configure channel settings')
+               .addStringOption(opt =>
+                   opt.setName('dir')
+                      .setDescription('Working directory for Claude in this channel')
+                      .setRequired(true)
+               )
+        )
+        .addSubcommand(sub =>
+            sub.setName('sessions')
+               .setDescription('List resumable Claude Code sessions')
+               .addStringOption(opt =>
+                   opt.setName('dir')
+                      .setDescription('Project directory to list sessions for (defaults to channel config)')
+                      .setRequired(false)
+               )
+               .addIntegerOption(opt =>
+                   opt.setName('limit')
+                      .setDescription('Max sessions to show (default 5)')
+                      .setRequired(false)
+                      .setMinValue(1)
+                      .setMaxValue(25)
+               )
+        );
 
+    if (!cordCommand) {
         await c.application?.commands.create(command);
         log('Slash commands registered');
     } else {
-        log('Slash commands already registered');
+        // Update existing command to include new subcommands
+        await cordCommand.edit(command);
+        log('Slash commands updated');
     }
 
     // Start HTTP API server
@@ -203,6 +223,48 @@ client.on(Events.InteractionCreate, async (interaction: Interaction) => {
                 ephemeral: true
             });
             log(`Channel ${interaction.channelId} configured with working dir: ${dir}`);
+        }
+
+        if (subcommand === 'sessions') {
+            // Resolve project directory: explicit option > channel config > env > cwd
+            let projectDir = interaction.options.getString('dir');
+            if (projectDir) {
+                if (projectDir.startsWith('~')) {
+                    projectDir = projectDir.replace('~', homedir());
+                }
+                projectDir = resolve(projectDir);
+            } else {
+                const channelConfig = getChannelConfigCached(interaction.channelId);
+                projectDir = channelConfig?.working_dir
+                    || process.env.CLAUDE_WORKING_DIR
+                    || process.cwd();
+            }
+
+            const limit = interaction.options.getInteger('limit') ?? 5;
+            const sessions = listSessions(projectDir, limit);
+
+            if (sessions.length === 0) {
+                await interaction.reply({
+                    content: `No Claude sessions found for \`${projectDir}\`.`,
+                    ephemeral: true,
+                });
+                return;
+            }
+
+            // Format session list
+            const lines = sessions.map((s, i) => {
+                const age = formatAge(s.lastActivity);
+                const preview = s.firstMessage
+                    ? s.firstMessage.slice(0, 80) + (s.firstMessage.length > 80 ? '…' : '')
+                    : '(no messages)';
+                return `**${i + 1}.** \`${s.id.slice(0, 8)}…\` — ${age} ago, ${s.messageCount} msgs\n> ${preview}`;
+            });
+
+            await interaction.reply({
+                content: `**Claude Sessions** for \`${projectDir}\`\n\n${lines.join('\n\n')}`,
+                ephemeral: true,
+            });
+            log(`Listed ${sessions.length} sessions for ${projectDir}`);
         }
         return;
     }
