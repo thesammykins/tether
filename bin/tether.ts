@@ -1010,7 +1010,12 @@ async function configCommand() {
                     console.error('Password cannot be empty');
                     process.exit(1);
                 }
-                writeSecret(key, value, pw);
+                try {
+                    writeSecret(key, value, pw);
+                } catch (err) {
+                    console.error(err instanceof Error ? err.message : 'Failed to save secret');
+                    process.exit(1);
+                }
                 console.log(`✔ Secret "${key}" saved (encrypted)`);
             } else {
                 if (value === undefined) {

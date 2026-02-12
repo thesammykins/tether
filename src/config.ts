@@ -226,7 +226,11 @@ export function writeSecret(key: string, value: string, password: string): void 
 
     let secrets: Record<string, string> = {};
     if (existsSync(getSecretsPath())) {
-        secrets = readSecrets(password);
+        try {
+            secrets = readSecrets(password);
+        } catch {
+            throw new Error('Wrong password. Use the same password you set previously, or delete ~/.config/tether/secrets.enc to start fresh.');
+        }
     }
 
     secrets[key] = value;
@@ -240,7 +244,12 @@ export function deleteKey(key: string, password?: string): boolean {
         if (!password) throw new Error('Password required to modify secrets');
         if (!existsSync(getSecretsPath())) return false;
 
-        const secrets = readSecrets(password);
+        let secrets: Record<string, string>;
+        try {
+            secrets = readSecrets(password);
+        } catch {
+            throw new Error('Wrong password. Use the same password you set previously.');
+        }
         if (!(key in secrets)) return false;
         delete secrets[key];
 
