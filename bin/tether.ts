@@ -42,7 +42,7 @@ import {
     deleteKey as deleteConfigKey, resolve as resolveConfig, resolveAll,
     isKnownKey, isSecret, getKeyMeta, getKnownKeys, hasSecrets, hasConfig,
     importDotEnv, CONFIG_PATHS,
-} from '../src/config';
+} from '../src/config.js';
 
 const PID_FILE = join(process.cwd(), '.tether.pid');
 const API_BASE = process.env.TETHER_API_URL || 'http://localhost:2643';
@@ -674,6 +674,164 @@ async function updateState() {
 
 // ============ Management Commands ============
 
+async function projectCommand() {
+    const subcommand = args[0];
+
+    switch (subcommand) {
+        case 'add': {
+            const name = args[1];
+            const rawPath = args[2];
+            if (!name || !rawPath) {
+                console.error('Usage: tether project add <name> <path>');
+                process.exit(1);
+            }
+
+            const { resolve: resolvePath } = await import('path');
+            const resolvedPath = resolvePath(rawPath);
+
+            if (!existsSync(resolvedPath)) {
+                console.error(`Error: Path does not exist: ${resolvedPath}`);
+                process.exit(1);
+            }
+
+            try {
+                const response = await fetch(`${API_BASE}/projects`, {
+                    method: 'POST',
+                    headers: buildApiHeaders(),
+                    body: JSON.stringify({ name, path: resolvedPath }),
+                });
+                const data = await response.json() as Record<string, unknown>;
+                if (!response.ok || data.error) {
+                    console.error('Error:', data.error || 'Request failed');
+                    process.exit(1);
+                }
+                console.log(`Project "${name}" added: ${resolvedPath}`);
+            } catch (error: unknown) {
+                const err = error as { code?: string; message?: string };
+                if (err.code === 'ECONNREFUSED') {
+                    console.error('Error: Cannot connect to Tether API. Is the bot running? (tether start)');
+                } else {
+                    console.error('Error:', err.message);
+                }
+                process.exit(1);
+            }
+            break;
+        }
+
+        case 'list': {
+            try {
+                const response = await fetch(`${API_BASE}/projects`, {
+                    headers: buildApiHeaders(),
+                });
+                const projects = await response.json() as Array<{
+                    name: string;
+                    path: string;
+                    is_default: number;
+                }>;
+                if (!response.ok) {
+                    console.error('Error: Failed to list projects');
+                    process.exit(1);
+                }
+                if (projects.length === 0) {
+                    console.log('No projects registered. Add one with: tether project add <name> <path>');
+                    return;
+                }
+                console.log('\nProjects:\n');
+                for (const p of projects) {
+                    const marker = p.is_default ? ' (default)' : '';
+                    console.log(`  ${p.name}${marker}`);
+                    console.log(`    ${p.path}\n`);
+                }
+            } catch (error: unknown) {
+                const err = error as { code?: string; message?: string };
+                if (err.code === 'ECONNREFUSED') {
+                    console.error('Error: Cannot connect to Tether API. Is the bot running? (tether start)');
+                } else {
+                    console.error('Error:', err.message);
+                }
+                process.exit(1);
+            }
+            break;
+        }
+
+        case 'remove': {
+            const name = args[1];
+            if (!name) {
+                console.error('Usage: tether project remove <name>');
+                process.exit(1);
+            }
+
+            try {
+                const response = await fetch(`${API_BASE}/projects/${encodeURIComponent(name)}`, {
+                    method: 'DELETE',
+                    headers: buildApiHeaders(),
+                });
+                const data = await response.json() as Record<string, unknown>;
+                if (!response.ok || data.error) {
+                    console.error('Error:', data.error || 'Request failed');
+                    process.exit(1);
+                }
+                console.log(`Project "${name}" removed.`);
+            } catch (error: unknown) {
+                const err = error as { code?: string; message?: string };
+                if (err.code === 'ECONNREFUSED') {
+                    console.error('Error: Cannot connect to Tether API. Is the bot running? (tether start)');
+                } else {
+                    console.error('Error:', err.message);
+                }
+                process.exit(1);
+            }
+            break;
+        }
+
+        case 'set-default': {
+            const name = args[1];
+            if (!name) {
+                console.error('Usage: tether project set-default <name>');
+                process.exit(1);
+            }
+
+            try {
+                const response = await fetch(`${API_BASE}/projects/${encodeURIComponent(name)}/default`, {
+                    method: 'POST',
+                    headers: buildApiHeaders(),
+                });
+                const data = await response.json() as Record<string, unknown>;
+                if (!response.ok || data.error) {
+                    console.error('Error:', data.error || 'Request failed');
+                    process.exit(1);
+                }
+                console.log(`Project "${name}" set as default.`);
+            } catch (error: unknown) {
+                const err = error as { code?: string; message?: string };
+                if (err.code === 'ECONNREFUSED') {
+                    console.error('Error: Cannot connect to Tether API. Is the bot running? (tether start)');
+                } else {
+                    console.error('Error:', err.message);
+                }
+                process.exit(1);
+            }
+            break;
+        }
+
+        default:
+            console.log(`
+Usage: tether project <subcommand>
+
+Subcommands:
+  add <name> <path>       Register a project (validates path exists)
+  list                    List all registered projects
+  remove <name>           Remove a project
+  set-default <name>      Set a project as the default
+`);
+            if (subcommand) {
+                console.error(`Unknown project subcommand: ${subcommand}`);
+                process.exit(1);
+            }
+            break;
+    }
+}
+
 async function setup() {
     console.log('\n🔌 Tether Setup\n');
 
@@ -1268,6 +1426,7 @@ Management Commands:
   health             Check Distether connection
   setup              Interactive setup wizard
   config             Manage configuration and encrypted secrets
+  project            Manage named projects
   help               Show this help
 
 Distether Commands:
@@ -1348,6 +1507,12 @@ Config Commands:
    config delete <key>          Delete a config value
    config import [path]         Import from .env file (default: ./.env)
    config path                  Show config file locations
+
+Project Commands:
+   project add <name> <path>    Register a named project directory
+   project list                 List all registered projects
+   project remove <name>        Remove a project
+   project set-default <name>   Set a project as the default
 
 Examples:
    tether send 123456789 "Hello world!"
@@ -1438,6 +1603,9 @@ switch (command) {
         break;
     case 'config':
         configCommand();
+        break;
+    case 'project':
+        projectCommand();
         break;
 
     default:

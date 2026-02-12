@@ -7,6 +7,12 @@
 
 import { Client, TextChannel, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } from 'discord.js';
 import { timingSafeEqual, createHmac } from 'crypto';
+import { existsSync } from 'fs';
+import { resolve } from 'path';
+import {
+    listProjects, createProject, deleteProject, setProjectDefault,
+    getProject,
+} from './db.js';
 
 const log = (msg: string) => process.stdout.write(`[api] ${msg}\n`);
 
@@ -557,6 +563,110 @@ export function startApiServer(client: Client, port: number = 2643) {
                     answer: responseValue.answer,
                     optionIndex: responseValue.optionIndex,
                 }), { headers });
+            }
+
+            // --- Project management endpoints ---
+
+            // GET /projects — list all projects
+            if (url.pathname === '/projects' && req.method === 'GET') {
+                const projects = listProjects();
+                return new Response(JSON.stringify(projects), { headers });
+            }
+
+            // POST /projects — create a project
+            if (url.pathname === '/projects' && req.method === 'POST') {
+                try {
+                    const body = await req.json() as {
+                        name?: string;
+                        path?: string;
+                        isDefault?: boolean;
+                    };
+
+                    if (!body.name || !body.path) {
+                        return new Response(JSON.stringify({ error: 'name and path are required' }), {
+                            status: 400,
+                            headers,
+                        });
+                    }
+
+                    // Validate path exists on disk
+                    const resolvedPath = resolve(body.path);
+                    if (!existsSync(resolvedPath)) {
+                        return new Response(JSON.stringify({ error: `Path does not exist: ${resolvedPath}` }), {
+                            status: 400,
+                            headers,
+                        });
+                    }
+
+                    createProject(body.name, resolvedPath, body.isDefault);
+                    const project = getProject(body.name);
+                    log(`Project created: ${body.name} → ${resolvedPath}`);
+                    return new Response(JSON.stringify({ success: true, project }), {
+                        status: 201,
+                        headers,
+                    });
+                } catch (error) {
+                    const message = error instanceof Error ? error.message : String(error);
+                    // Surface unique constraint violations as 409 Conflict
+                    if (message.includes('UNIQUE constraint')) {
+                        return new Response(JSON.stringify({ error: `Project already exists` }), {
+                            status: 409,
+                            headers,
+                        });
+                    }
+                    log(`Create project error: ${error instanceof Error ? error.stack : message}`);
+                    return new Response(JSON.stringify({ error: 'Internal server error' }), {
+                        status: 500,
+                        headers,
+                    });
+                }
+            }
+
+            // DELETE /projects/:name — delete a project
+            if (url.pathname.startsWith('/projects/') && req.method === 'DELETE') {
+                const name = decodeURIComponent(url.pathname.slice('/projects/'.length).split('/')[0] || '');
+                if (!name) {
+                    return new Response(JSON.stringify({ error: 'Project name is required' }), {
+                        status: 400,
+                        headers,
+                    });
+                }
+
+                const existing = getProject(name);
+                if (!existing) {
+                    return new Response(JSON.stringify({ error: `Project "${name}" not found` }), {
+                        status: 404,
+                        headers,
+                    });
+                }
+
+                deleteProject(name);
+                log(`Project deleted: ${name}`);
+                return new Response(JSON.stringify({ success: true }), { headers });
+            }
+
+            // POST /projects/:name/default — set project as default
+            if (url.pathname.match(/^\/projects\/[^/]+\/default$/) && req.method === 'POST') {
+                const parts = url.pathname.split('/');
+                const name = decodeURIComponent(parts[2] || '');
+                if (!name) {
+                    return new Response(JSON.stringify({ error: 'Project name is required' }), {
+                        status: 400,
+                        headers,
+                    });
+                }
+
+                const existing = getProject(name);
+                if (!existing) {
+                    return new Response(JSON.stringify({ error: `Project "${name}" not found` }), {
+                        status: 404,
+                        headers,
+                    });
+                }
+
+                setProjectDefault(name);
+                log(`Project set as default: ${name}`);
+                return new Response(JSON.stringify({ success: true }), { headers });
             }
 
             // 404 for unknown routes

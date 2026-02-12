@@ -57,7 +57,8 @@ const CONFIG_KEYS: Record<string, ConfigKeyMeta> = {
 
     // Agent
     AGENT_TYPE: { section: 'agent', default: 'claude', description: 'Agent type (claude, opencode, codex)' },
-    CLAUDE_WORKING_DIR: { section: 'agent', default: '', description: 'Default working directory for agent sessions' },
+    /** @deprecated Use named projects instead (tether project add). Kept for backward compatibility. */
+    CLAUDE_WORKING_DIR: { section: 'agent', default: '', description: 'Default working directory for agent sessions (deprecated: use projects)' },
     CLAUDE_BIN: { section: 'agent', default: '', description: 'Override path to Claude CLI binary' },
     OPENCODE_BIN: { section: 'agent', default: '', description: 'Override path to OpenCode CLI binary' },
     CODEX_BIN: { section: 'agent', default: '', description: 'Override path to Codex CLI binary' },
@@ -402,3 +403,34 @@ export const CONFIG_PATHS = {
     get CONFIG_PATH() { return getConfigPath(); },
     get SECRETS_PATH() { return getSecretsPath(); },
 } as const;
+
+/**
+ * Migrate CLAUDE_WORKING_DIR to a named project.
+ *
+ * If CLAUDE_WORKING_DIR is set and no projects exist in the DB,
+ * creates a default project from the directory name and path.
+ * Safe to call multiple times — no-ops when projects already exist.
+ */
+export function migrateWorkingDirToProject(): void {
+    // Lazy-import to avoid circular dependency at module load time
+    const { listProjects, createProject, db } = require('./db.js');
+    const { resolve: resolvePath, basename } = require('path');
+
+    const workingDir = resolve('CLAUDE_WORKING_DIR');
+    if (!workingDir) return;
+
+    // Use a transaction to prevent TOCTOU race: concurrent calls could both
+    // see 0 projects and create duplicates without atomic check-and-insert.
+    db.transaction(() => {
+        const existing = listProjects() as { name: string }[];
+        if (existing.length > 0) {
+            console.log('[config] CLAUDE_WORKING_DIR is deprecated. Use named projects instead (tether project add).');
+            return;
+        }
+
+        const resolvedPath = resolvePath(workingDir);
+        const dirName = basename(resolvedPath);
+        createProject(dirName, resolvedPath, true);
+        console.log(`[config] Migrated CLAUDE_WORKING_DIR to project "${dirName}"`);
+    })();
+}

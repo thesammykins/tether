@@ -18,7 +18,7 @@ import { mkdirSync } from 'fs';
 import { dirname } from 'path';
 try {
     mkdirSync(dirname(DB_PATH), { recursive: true });
-} catch {}
+} catch { /* Directory already exists or permission issue */ }
 
 // Open database
 export const db = new Database(DB_PATH);
@@ -72,6 +72,26 @@ db.run(`
     )
 `);
 
+// Create projects table
+db.run(`
+    CREATE TABLE IF NOT EXISTS projects (
+        name TEXT PRIMARY KEY,
+        path TEXT NOT NULL,
+        is_default INTEGER DEFAULT 0,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )
+`);
+
+// Add project_name column to channels table (migration)
+try {
+    db.run(`ALTER TABLE channels ADD COLUMN project_name TEXT REFERENCES projects(name)`);
+} catch { /* Column may already exist */ }
+
+// Add project_name column to threads table (migration)
+try {
+    db.run(`ALTER TABLE threads ADD COLUMN project_name TEXT REFERENCES projects(name)`);
+} catch { /* Column may already exist */ }
+
 // Note: rate limiting is handled in-memory, see src/middleware/rate-limiter.ts
 
 console.log(`[db] SQLite database ready at ${DB_PATH}`);
@@ -115,4 +135,90 @@ export function updateSessionId(threadId: string, sessionId: string): void {
     db.run(`
         UPDATE threads SET session_id = ? WHERE thread_id = ?
     `, [sessionId, threadId]);
+}
+
+// --- Project types and helpers ---
+
+export interface Project {
+    name: string;
+    path: string;
+    is_default: number;
+    created_at: string;
+}
+
+export function createProject(name: string, path: string, isDefault?: boolean): void {
+    db.transaction(() => {
+        if (isDefault) {
+            db.run(`UPDATE projects SET is_default = 0 WHERE is_default = 1`);
+        }
+        db.run(`
+            INSERT INTO projects (name, path, is_default) VALUES (?, ?, ?)
+            ON CONFLICT(name) DO UPDATE SET path = ?, is_default = ?
+        `, [name, path, isDefault ? 1 : 0, path, isDefault ? 1 : 0]);
+    })();
+}
+
+export function getProject(name: string): Project | null {
+    return db.query('SELECT * FROM projects WHERE name = ?')
+        .get(name) as Project | null;
+}
+
+export function getDefaultProject(): Project | null {
+    return db.query('SELECT * FROM projects WHERE is_default = 1')
+        .get() as Project | null;
+}
+
+export function listProjects(): Project[] {
+    return db.query('SELECT * FROM projects ORDER BY name')
+        .all() as Project[];
+}
+
+export function deleteProject(name: string): void {
+    db.transaction(() => {
+        db.run(`UPDATE channels SET project_name = NULL WHERE project_name = ?`, [name]);
+        db.run(`UPDATE threads SET project_name = NULL WHERE project_name = ?`, [name]);
+        db.run(`DELETE FROM projects WHERE name = ?`, [name]);
+    })();
+}
+
+export function setProjectDefault(name: string): void {
+    db.transaction(() => {
+        db.run(`UPDATE projects SET is_default = 0 WHERE is_default = 1`);
+        db.run(`UPDATE projects SET is_default = 1 WHERE name = ?`, [name]);
+    })();
+}
+
+export function getChannelProject(channelId: string): Project | null {
+    const row = db.query(`
+        SELECT p.* FROM projects p
+        JOIN channels c ON c.project_name = p.name
+        WHERE c.channel_id = ?
+    `).get(channelId) as Project | null;
+    return row;
+}
+
+export function setChannelProject(channelId: string, projectName: string): void {
+    // Look up project path to keep working_dir in sync for legacy code paths
+    const project = db.query('SELECT path FROM projects WHERE name = ?')
+        .get(projectName) as { path: string } | null;
+    const workingDir = project?.path ?? null;
+    db.run(`
+        INSERT INTO channels (channel_id, project_name, working_dir) VALUES (?, ?, ?)
+        ON CONFLICT(channel_id) DO UPDATE SET project_name = ?, working_dir = COALESCE(?, working_dir), updated_at = CURRENT_TIMESTAMP
+    `, [channelId, projectName, workingDir, projectName, workingDir]);
+}
+
+export function getThreadProject(threadId: string): Project | null {
+    const row = db.query(`
+        SELECT p.* FROM projects p
+        JOIN threads t ON t.project_name = p.name
+        WHERE t.thread_id = ?
+    `).get(threadId) as Project | null;
+    return row;
+}
+
+export function setThreadProject(threadId: string, projectName: string): void {
+    db.run(`
+        UPDATE threads SET project_name = ? WHERE thread_id = ?
+    `, [projectName, threadId]);
 }
