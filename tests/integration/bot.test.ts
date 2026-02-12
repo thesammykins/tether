@@ -7,6 +7,11 @@
  */
 
 import { describe, it, expect, beforeEach, mock } from 'bun:test';
+
+// Set rate limit env vars before importing the module (reads at load time)
+process.env.RATE_LIMIT_REQUESTS = '5';
+process.env.RATE_LIMIT_WINDOW_MS = '60000';
+
 import { checkRateLimit, resetRateLimits } from '../../src/middleware/rate-limiter.js';
 import { resetSessionLimits } from '../../src/features/session-limits.js';
 import { generateThreadName } from '../../src/features/thread-naming.js';

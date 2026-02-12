@@ -1,4 +1,9 @@
 import { describe, it, expect, beforeEach } from 'bun:test';
+
+// Set rate limit env vars before importing the module (reads at load time)
+process.env.RATE_LIMIT_REQUESTS = '5';
+process.env.RATE_LIMIT_WINDOW_MS = '60000';
+
 import { checkRateLimit, resetRateLimits, cleanupInterval } from '../../src/middleware/rate-limiter.ts';
 
 describe('rate-limiter middleware', () => {
