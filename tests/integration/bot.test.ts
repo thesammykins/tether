@@ -7,12 +7,7 @@
  */
 
 import { describe, it, expect, beforeEach, mock } from 'bun:test';
-
-// Set rate limit env vars before importing the module (reads at load time)
-process.env.RATE_LIMIT_REQUESTS = '5';
-process.env.RATE_LIMIT_WINDOW_MS = '60000';
-
-import { checkRateLimit, resetRateLimits } from '../../src/middleware/rate-limiter.js';
+import { checkRateLimit, resetRateLimits, RATE_LIMIT_REQUESTS } from '../../src/middleware/rate-limiter.js';
 import { resetSessionLimits } from '../../src/features/session-limits.js';
 import { generateThreadName } from '../../src/features/thread-naming.js';
 import { db } from '../../src/db.js';
@@ -32,10 +27,8 @@ describe('Bot Message Pipeline Integration', () => {
   
   describe('Pipeline Coordination', () => {
     it('should coordinate rate limiting across multiple users', () => {
-      const RATE_LIMIT = parseInt(process.env.RATE_LIMIT_REQUESTS || '5');
-      
       // User 1 can send messages
-      for (let i = 0; i < RATE_LIMIT; i++) {
+      for (let i = 0; i < RATE_LIMIT_REQUESTS; i++) {
         expect(checkRateLimit('user1')).toBe(true);
       }
       expect(checkRateLimit('user1')).toBe(false); // Now limited

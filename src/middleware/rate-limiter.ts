@@ -16,6 +16,9 @@ function safeParseInt(value: string | undefined, defaultValue: number): number {
 const RATE_LIMIT_REQUESTS = safeParseInt(process.env.RATE_LIMIT_REQUESTS, 10);
 const RATE_LIMIT_WINDOW_MS = safeParseInt(process.env.RATE_LIMIT_WINDOW_MS, 60000);
 
+// Export configured limit for test assertions
+export { RATE_LIMIT_REQUESTS };
+
 // In-memory sliding window: userId -> array of timestamps
 const userTimestamps = new Map<string, number[]>();
 
