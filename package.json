@@ -49,7 +49,6 @@
     "test": "bun test"
   },
   "dependencies": {
-    "@thesammykins/tether": "thesammykins/tether",
     "bullmq": "^5.67.1",
     "discord.js": "^14.25.1",
     "ioredis": "^5.9.2"
