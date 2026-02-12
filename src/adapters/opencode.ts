@@ -10,10 +10,12 @@ import { debugLog, debugBlock } from '../debug.js';
  * Wraps the OpenCode CLI with session handling and JSON output parsing.
  * 
  * Key flags:
- * - `run "<prompt>"`: Execute a prompt
+ * - `run`: Execute a prompt (reads from stdin or positional args)
  * - `--session <id>` or `--continue`: Resume existing session
- * - `--format json`: Structured output
- * - `--cwd <path>`: Set working directory
+ * - `--format json`: NDJSON event stream output
+ * 
+ * The prompt is piped via stdin to handle multi-line content with
+ * XML tags and special characters safely.
  */
 
 // Cache resolved binary path
@@ -24,6 +26,45 @@ let cachedBinarySource: BinarySource | 'unknown' = 'unknown';
 export function _resetBinaryCache(): void {
   cachedBinaryPath = null;
   cachedBinarySource = 'unknown';
+}
+
+/**
+ * Parse NDJSON event stream from `opencode run --format json`.
+ *
+ * Each line is a JSON object like:
+ *   {"type":"text","sessionID":"ses_xxx","part":{"text":"Hello",...}}
+ *   {"type":"step_start","sessionID":"ses_xxx","part":{...}}
+ *   {"type":"step_finish","sessionID":"ses_xxx","part":{...}}
+ *
+ * We concatenate all "text" event parts and extract the sessionID.
+ */
+function parseNdjsonEvents(raw: string): { text: string; eventSessionId: string | null } {
+  const lines = raw.trim().split('\n').filter(Boolean);
+  const textParts: string[] = [];
+  let eventSessionId: string | null = null;
+
+  for (const line of lines) {
+    try {
+      const event = JSON.parse(line) as Record<string, unknown>;
+
+      // Extract sessionID from any event
+      if (!eventSessionId && typeof event.sessionID === 'string') {
+        eventSessionId = event.sessionID;
+      }
+
+      // Collect text content
+      if (event.type === 'text') {
+        const part = event.part as Record<string, unknown> | undefined;
+        if (part && typeof part.text === 'string') {
+          textParts.push(part.text);
+        }
+      }
+    } catch {
+      // Skip non-JSON lines (shouldn't happen with --format json)
+    }
+  }
+
+  return { text: textParts.join(''), eventSessionId };
 }
 
 export class OpenCodeAdapter implements AgentAdapter {
@@ -105,24 +146,20 @@ export class OpenCodeAdapter implements AgentAdapter {
     const binaryPath = await this.getBinaryPath();
     const args = [binaryPath, 'run'];
 
-    // Format as JSON for structured output
+    // Format as JSON for structured output (NDJSON event stream)
     args.push('--format', 'json');
 
     // Session handling
     if (resume) {
-      // Resume existing session
       args.push('--session', sessionId);
     }
 
-    // Working directory
-    if (workingDir) {
-      args.push('--cwd', workingDir);
-    }
+    // Note: opencode has no --cwd flag; working directory is set via
+    // Bun.spawn's cwd option below.
 
-    // The prompt (always last)
-    args.push(prompt);
+    // Prompt is piped via stdin to avoid shell escaping issues with
+    // multi-line prompts containing XML tags, angle brackets, etc.
 
-    // Spawn the process
     const cwd = workingDir || process.cwd();
 
     debugBlock('opencode', 'Spawn', {
@@ -130,6 +167,7 @@ export class OpenCodeAdapter implements AgentAdapter {
       args: args.join(' '),
       cwd,
       resume: String(resume),
+      promptLength: String(prompt.length),
     });
 
     let proc: ReturnType<typeof Bun.spawn>;
@@ -137,6 +175,7 @@ export class OpenCodeAdapter implements AgentAdapter {
       proc = Bun.spawn(args, {
         cwd,
         env: process.env,
+        stdin: 'pipe',
         stdout: 'pipe',
         stderr: 'pipe',
       });
@@ -150,6 +189,19 @@ export class OpenCodeAdapter implements AgentAdapter {
         args,
         error,
       });
+    }
+
+    // Write prompt to stdin then close the stream.
+    // Bun.spawn with stdin:'pipe' returns a FileSink.
+    const stdin = proc.stdin;
+    if (!stdin || typeof stdin === 'number') {
+      throw new Error('Failed to get writable stdin from OpenCode process');
+    }
+    try {
+      stdin.write(prompt);
+      stdin.end();
+    } catch (error) {
+      throw new Error(`Failed to write prompt to OpenCode stdin: ${error}`);
     }
 
     // Collect output and handle async spawn failures
@@ -178,24 +230,13 @@ export class OpenCodeAdapter implements AgentAdapter {
       throw new Error(`OpenCode CLI failed (exit ${exitCode}): ${stderr || 'Unknown error'}`);
     }
 
-    // Parse JSON output
-    let output = stdout.trim();
-    let finalSessionId = sessionId;
-
-    try {
-      const parsed = JSON.parse(stdout);
-      output = parsed.output || parsed.response || parsed.result || stdout.trim();
-      
-      // Extract session ID from output if not resuming
-      if (!resume && parsed.sessionId) {
-        finalSessionId = parsed.sessionId;
-      } else if (!resume && parsed.session_id) {
-        finalSessionId = parsed.session_id;
-      }
-    } catch {
-      // Not JSON, use raw output
-      output = stdout.trim();
-    }
+    // Parse NDJSON event stream from --format json output.
+    // Each line is a JSON object with a "type" field. We extract:
+    // - sessionID from any event (they all carry it)
+    // - text content from "text" type events
+    const { text, eventSessionId } = parseNdjsonEvents(stdout);
+    const output = text || stdout.trim();
+    const finalSessionId = eventSessionId || sessionId;
 
     return {
       output,

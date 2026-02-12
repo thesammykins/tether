@@ -100,6 +100,14 @@ function validateWorkingDir(dir: string): string | null {
 // Force unbuffered logging
 const log = (msg: string) => process.stdout.write(`[bot] ${msg}\n`);
 
+/** Resolve default working directory with existence check. Falls back to cwd. */
+function getDefaultWorkingDir(): string {
+    const envDir = process.env.CLAUDE_WORKING_DIR;
+    if (envDir && existsSync(envDir)) return envDir;
+    if (envDir) log(`WARNING: CLAUDE_WORKING_DIR="${envDir}" does not exist, using cwd`);
+    return process.cwd();
+}
+
 // Helper function to redact message content in logs (preserves full content in DEBUG mode)
 const redactContent = (content: string): string => {
     if (process.env.DEBUG === 'true') {
@@ -140,7 +148,7 @@ function resolveWorkingDir(message: string, channelId: string): { workingDir: st
 
     // Fall back to env or cwd
     return {
-        workingDir: process.env.CLAUDE_WORKING_DIR || process.cwd(),
+        workingDir: getDefaultWorkingDir(),
         cleanedMessage: message
     };
 }
@@ -257,8 +265,7 @@ client.on(Events.InteractionCreate, async (interaction: Interaction) => {
             } else {
                 const channelConfig = getChannelConfigCached(interaction.channelId);
                 projectDir = channelConfig?.working_dir
-                    || process.env.CLAUDE_WORKING_DIR
-                    || process.cwd();
+                    || getDefaultWorkingDir();
             }
 
             const limit = interaction.options.getInteger('limit') ?? 5;
@@ -423,8 +430,7 @@ client.on(Events.MessageCreate, async (message: Message) => {
 
             // Resume existing session
             const workingDir = mapping.working_dir ||
-                process.env.CLAUDE_WORKING_DIR ||
-                process.cwd();
+                getDefaultWorkingDir();
 
             await claudeQueue.add('process', {
                 prompt: content,
@@ -499,8 +505,7 @@ client.on(Events.MessageCreate, async (message: Message) => {
             if (mapping) {
                 const workingDir = mapping.working_dir ||
                     getChannelConfigCached(message.channel.isThread() ? message.channel.parentId || '' : '')?.working_dir ||
-                    process.env.CLAUDE_WORKING_DIR ||
-                    process.cwd();
+                    getDefaultWorkingDir();
                 
                 // Replay each held message in order
                 for (const held of pauseState.heldMessages || []) {
@@ -592,8 +597,7 @@ client.on(Events.MessageCreate, async (message: Message) => {
         // Use stored working dir or fall back to channel config / env / cwd
         const workingDir = mapping.working_dir ||
             getChannelConfigCached(thread.parentId || '')?.working_dir ||
-            process.env.CLAUDE_WORKING_DIR ||
-            process.cwd();
+            getDefaultWorkingDir();
 
         // Queue for Claude processing with session resume
         await claudeQueue.add('process', {
