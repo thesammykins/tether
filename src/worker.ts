@@ -8,7 +8,6 @@
  */
 
 import { Worker, Job } from 'bullmq';
-import IORedis from 'ioredis';
 import { existsSync } from 'fs';
 import { getAdapter } from './adapters/registry.js';
 import { sendToThread } from './discord.js';
@@ -31,11 +30,12 @@ function getDefaultWorkingDir(): string {
     return process.cwd();
 }
 
-const connection = new IORedis({
+// Pass config object so BullMQ creates its own ioredis instance internally.
+const connection = {
     host: process.env.REDIS_HOST || 'localhost',
     port: parseInt(process.env.REDIS_PORT || '6379'),
-    maxRetriesPerRequest: null,
-});
+    maxRetriesPerRequest: null as null,
+};
 
 const worker = new Worker<ClaudeJob>(
     'claude',

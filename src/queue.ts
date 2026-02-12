@@ -8,14 +8,14 @@
  */
 
 import { Queue } from 'bullmq';
-import IORedis from 'ioredis';
 
-// Redis connection for BullMQ
-const connection = new IORedis({
+// Pass config object so BullMQ creates its own ioredis instance internally,
+// avoiding type conflicts between top-level ioredis and bullmq's bundled copy.
+const connection = {
     host: process.env.REDIS_HOST || 'localhost',
     port: parseInt(process.env.REDIS_PORT || '6379'),
-    maxRetriesPerRequest: null, // Required for BullMQ
-});
+    maxRetriesPerRequest: null as null, // Required for BullMQ
+};
 
 // The queue that holds Claude processing jobs
 export const claudeQueue = new Queue('claude', {
