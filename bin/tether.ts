@@ -85,18 +85,23 @@ async function prompt(question: string): Promise<string> {
 
 // ============ API Helper ============
 
+/**
+ * Build standard API headers including Authorization if API_TOKEN is set.
+ * All API routes except /health require auth when API_TOKEN is configured.
+ */
+function buildApiHeaders(): Record<string, string> {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (process.env.API_TOKEN) {
+        headers['Authorization'] = `Bearer ${process.env.API_TOKEN}`;
+    }
+    return headers;
+}
+
 async function apiCall(endpoint: string, body: any): Promise<any> {
     try {
-        const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-        
-        // Add Authorization header if API_TOKEN is set
-        if (process.env.API_TOKEN) {
-            headers['Authorization'] = `Bearer ${process.env.API_TOKEN}`;
-        }
-        
         const response = await fetch(`${API_BASE}${endpoint}`, {
             method: 'POST',
-            headers,
+            headers: buildApiHeaders(),
             body: JSON.stringify(body),
         });
         const data = await response.json();
@@ -387,7 +392,9 @@ async function askQuestion() {
 
     while (attempts < maxAttempts) {
         try {
-            const response = await fetch(`http://localhost:${API_PORT}/question-response/${requestId}`);
+            const response = await fetch(`http://localhost:${API_PORT}/question-response/${requestId}`, {
+                headers: buildApiHeaders(),
+            });
             
             if (response.status === 404) {
                 // Not yet registered or answered, keep polling
@@ -870,8 +877,8 @@ async function start() {
     console.log(`Worker PID: ${worker.pid}`);
     console.log('\nTether is running. Press Ctrl+C to stop.\n');
 
-    // Handle exit
-    process.on('SIGINT', () => {
+    // Graceful shutdown handler
+    const shutdown = () => {
         console.log('\nStopping Tether...');
         bot.kill();
         worker.kill();
@@ -880,7 +887,11 @@ async function start() {
             fs.unlinkSync(PID_FILE);
         }
         process.exit(0);
-    });
+    };
+
+    // Handle SIGINT (Ctrl+C) and SIGTERM (systemd, Docker, etc.)
+    process.on('SIGINT', shutdown);
+    process.on('SIGTERM', shutdown);
 
     // Wait for processes
     await Promise.all([bot.exited, worker.exited]);
@@ -897,12 +908,16 @@ function stop() {
     try {
         process.kill(pids.bot);
         console.log(`Stopped bot (PID ${pids.bot})`);
-    } catch {}
+    } catch {
+        // Process may have already exited - this is expected and safe to ignore
+    }
 
     try {
         process.kill(pids.worker);
         console.log(`Stopped worker (PID ${pids.worker})`);
-    } catch {}
+    } catch {
+        // Process may have already exited - this is expected and safe to ignore
+    }
 
     const fs = require('fs');
     fs.unlinkSync(PID_FILE);
@@ -957,7 +972,7 @@ async function health() {
 // ============ Config ============
 
 async function promptPassword(label = 'Password: '): Promise<string> {
-    // Use raw mode to hide password input
+    // Use raw mode to hide password input in TTY
     if (process.stdin.isTTY) {
         process.stdout.write(label);
         return new Promise((resolve) => {
@@ -981,7 +996,27 @@ async function promptPassword(label = 'Password: '): Promise<string> {
             });
         });
     }
-    return prompt(label);
+    
+    // Non-TTY: read from stdin without echo (for pipes/CI)
+    // Example: echo "my-token" | tether config set DISCORD_BOT_TOKEN
+    return new Promise((resolve, reject) => {
+        let data = '';
+        process.stdin.setEncoding('utf-8');
+        process.stdin.resume();
+        
+        process.stdin.on('data', (chunk: string) => {
+            data += chunk;
+        });
+        
+        process.stdin.on('end', () => {
+            // Trim trailing newline from piped input
+            resolve(data.trim());
+        });
+        
+        process.stdin.on('error', (err) => {
+            reject(err);
+        });
+    });
 }
 
 async function configCommand() {

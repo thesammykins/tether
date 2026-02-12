@@ -28,8 +28,12 @@ jobs:
         run: bun install
 
       - name: Typecheck
-        continue-on-error: true
         run: bun x tsc --noEmit
+
+      - name: Dependency Audit
+        continue-on-error: true
+        # Stopgap until bun audit exists - npm audit used as advisory check
+        run: npm audit --audit-level=high
 
       - name: Test
         run: bun test

@@ -6,6 +6,7 @@
  */
 
 import { Client, TextChannel, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } from 'discord.js';
+import { timingSafeEqual, createHmac } from 'crypto';
 
 const log = (msg: string) => process.stdout.write(`[api] ${msg}\n`);
 
@@ -20,13 +21,18 @@ type ButtonHandler = {
     data?: Record<string, unknown>;
 };
 
-export const buttonHandlers = new Map<string, ButtonHandler>();
+type TimestampedEntry<T> = {
+    value: T;
+    createdAt: number;
+};
+
+export const buttonHandlers = new Map<string, TimestampedEntry<ButtonHandler>>();
 
 // Question response store — maps requestId to response
-export const questionResponses = new Map<string, { answer: string; optionIndex: number } | null>();
+export const questionResponses = new Map<string, TimestampedEntry<{ answer: string; optionIndex: number } | null>>();
 
 // Track which threads are waiting for a typed answer
-export const pendingTypedAnswers = new Map<string, string>(); // threadId → requestId
+export const pendingTypedAnswers = new Map<string, TimestampedEntry<string>>(); // threadId → requestId
 
 // Pending questions with TTL tracking
 type PendingQuestion = {
@@ -45,12 +51,167 @@ const BINARY_EXTENSIONS = new Set([
 ]);
 
 /**
+ * Timing-safe token comparison middleware
+ * Returns 401 if token is required but missing/invalid
+ */
+function checkAuth(req: Request, apiToken: string | undefined, pathname: string): Response | null {
+    // Skip auth for /health endpoint
+    if (pathname === '/health') {
+        return null;
+    }
+
+    if (!apiToken) {
+        return null; // No token configured, auth not required
+    }
+
+    const authHeader = req.headers.get('Authorization');
+    if (!authHeader) {
+        return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+            status: 401,
+            headers: { 'Content-Type': 'application/json' },
+        });
+    }
+
+    const expectedAuth = `Bearer ${apiToken}`;
+    
+    // Timing-safe comparison to prevent timing attacks
+    try {
+        const authBuffer = Buffer.from(authHeader, 'utf-8');
+        const expectedBuffer = Buffer.from(expectedAuth, 'utf-8');
+        
+        // Handle length differences safely
+        if (authBuffer.length !== expectedBuffer.length) {
+            return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+                status: 401,
+                headers: { 'Content-Type': 'application/json' },
+            });
+        }
+        
+        if (!timingSafeEqual(authBuffer, expectedBuffer)) {
+            return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+                status: 401,
+                headers: { 'Content-Type': 'application/json' },
+            });
+        }
+    } catch {
+        return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+            status: 401,
+            headers: { 'Content-Type': 'application/json' },
+        });
+    }
+
+    return null; // Auth passed
+}
+
+/**
+ * Check request payload size
+ * Returns 413 if payload exceeds 1MB limit
+ */
+function checkPayloadSize(req: Request): Response | null {
+    const contentLength = req.headers.get('Content-Length');
+    if (contentLength) {
+        const sizeBytes = parseInt(contentLength, 10);
+        const maxSizeBytes = 1024 * 1024; // 1MB
+        
+        if (sizeBytes > maxSizeBytes) {
+            return new Response(JSON.stringify({ error: 'Payload too large' }), {
+                status: 413,
+                headers: { 'Content-Type': 'application/json' },
+            });
+        }
+    }
+    return null;
+}
+
+/**
+ * Generate HMAC-SHA256 signature for webhook payload
+ */
+export function generateWebhookSignature(payload: Record<string, unknown>, secret: string): string {
+    const payloadString = JSON.stringify(payload);
+    const hmac = createHmac('sha256', secret);
+    hmac.update(payloadString);
+    return hmac.digest('hex');
+}
+
+/**
+ * Validate webhook HMAC signature using timing-safe comparison
+ * Returns true if signature is valid, false otherwise
+ */
+export function validateWebhookSignature(
+    payload: Record<string, unknown>,
+    signature: string,
+    secret: string
+): boolean {
+    const expectedSignature = generateWebhookSignature(payload, secret);
+    
+    try {
+        const sigBuffer = Buffer.from(signature, 'utf-8');
+        const expectedBuffer = Buffer.from(expectedSignature, 'utf-8');
+        
+        // Handle length differences safely
+        if (sigBuffer.length !== expectedBuffer.length) {
+            return false;
+        }
+        
+        return timingSafeEqual(sigBuffer, expectedBuffer);
+    } catch {
+        return false;
+    }
+}
+
+/**
+ * TTL-based cleanup for unbounded Maps
+ * Runs every 60 seconds
+ */
+function startMapCleanup() {
+    setInterval(() => {
+        const now = Date.now();
+        
+        // buttonHandlers: 30 minute TTL
+        const buttonHandlerTTL = 30 * 60 * 1000;
+        for (const [key, entry] of buttonHandlers.entries()) {
+            if (now - entry.createdAt > buttonHandlerTTL) {
+                buttonHandlers.delete(key);
+                log(`Cleaned up button handler: ${key} (expired after 30 min)`);
+            }
+        }
+        
+        // questionResponses: 10 minute TTL
+        const questionResponseTTL = 10 * 60 * 1000;
+        for (const [key, entry] of questionResponses.entries()) {
+            if (now - entry.createdAt > questionResponseTTL) {
+                questionResponses.delete(key);
+                log(`Cleaned up question response: ${key} (expired after 10 min)`);
+            }
+        }
+        
+        // pendingTypedAnswers: 10 minute TTL
+        const pendingAnswerTTL = 10 * 60 * 1000;
+        for (const [key, entry] of pendingTypedAnswers.entries()) {
+            if (now - entry.createdAt > pendingAnswerTTL) {
+                pendingTypedAnswers.delete(key);
+                log(`Cleaned up pending typed answer: ${key} (expired after 10 min)`);
+            }
+        }
+    }, 60_000); // Every 60 seconds
+}
+
+/**
  * Start the HTTP API server
  */
 export function startApiServer(client: Client, port: number = 2643) {
     // Optional API token authentication
     const apiToken = process.env.API_TOKEN;
     const hostname = process.env.TETHER_API_HOST || '127.0.0.1';
+    
+    // Security warning: API_TOKEN required for non-loopback addresses
+    const isLoopback = hostname === '127.0.0.1' || hostname === 'localhost' || hostname === '::1';
+    if (!apiToken && !isLoopback) {
+        log('[SECURITY] WARNING: API_TOKEN not set while binding to non-loopback address. API endpoints are unprotected!');
+    }
+    
+    // Start TTL-based Map cleanup
+    startMapCleanup();
     
     const server = Bun.serve({
         port,
@@ -59,17 +220,16 @@ export function startApiServer(client: Client, port: number = 2643) {
             const url = new URL(req.url);
             const headers = { 'Content-Type': 'application/json' };
 
-            // Authentication check - skip for /health endpoint
-            if (apiToken && url.pathname !== '/health') {
-                const authHeader = req.headers.get('Authorization');
-                const expectedAuth = `Bearer ${apiToken}`;
-                
-                if (!authHeader || authHeader !== expectedAuth) {
-                    return new Response(JSON.stringify({ error: 'Unauthorized' }), {
-                        status: 401,
-                        headers,
-                    });
-                }
+            // Authentication check using timing-safe comparison
+            const authResult = checkAuth(req, apiToken, url.pathname);
+            if (authResult) {
+                return authResult;
+            }
+
+            // Payload size check (1MB limit)
+            const sizeResult = checkPayloadSize(req);
+            if (sizeResult) {
+                return sizeResult;
             }
 
             // Health check
@@ -92,8 +252,8 @@ export function startApiServer(client: Client, port: number = 2643) {
                     const result = await handleCommand(client, body.command, body.args);
                     return new Response(JSON.stringify(result), { headers });
                 } catch (error) {
-                    log(`Command error: ${error}`);
-                    return new Response(JSON.stringify({ error: String(error) }), {
+                    log(`Command error: ${error instanceof Error ? error.stack : String(error)}`);
+                    return new Response(JSON.stringify({ error: 'Internal server error' }), {
                         status: 500,
                         headers,
                     });
@@ -122,7 +282,7 @@ export function startApiServer(client: Client, port: number = 2643) {
                     // Determine encoding - check if file is binary based on extension
                     const ext = body.fileName.toLowerCase().match(/\.[^.]+$/)?.[0];
                     const isBinary = ext ? BINARY_EXTENSIONS.has(ext) : false;
-                    const encoding = body.isBase64 || isBinary ? 'base64' : 'utf-8';
+                    const encoding: BufferEncoding = body.isBase64 || isBinary ? 'base64' : 'utf-8';
                     
                     const buffer = Buffer.from(body.fileContent, encoding);
                     const message = await (channel as TextChannel).send({
@@ -138,8 +298,8 @@ export function startApiServer(client: Client, port: number = 2643) {
                         messageId: message.id,
                     }), { headers });
                 } catch (error) {
-                    log(`Send file error: ${error}`);
-                    return new Response(JSON.stringify({ error: String(error) }), {
+                    log(`Send file error: ${error instanceof Error ? error.stack : String(error)}`);
+                    return new Response(JSON.stringify({ error: 'Internal server error' }), {
                         status: 500,
                         headers,
                     });
@@ -162,7 +322,7 @@ export function startApiServer(client: Client, port: number = 2643) {
                     // Determine encoding - check if file is binary based on extension
                     const ext = body.fileName.toLowerCase().match(/\.[^.]+$/)?.[0];
                     const isBinary = ext ? BINARY_EXTENSIONS.has(ext) : false;
-                    const encoding = body.isBase64 || isBinary ? 'base64' : 'utf-8';
+                    const encoding: BufferEncoding = body.isBase64 || isBinary ? 'base64' : 'utf-8';
                     
                     const buffer = Buffer.from(body.fileContent, encoding);
                     const message = await user.send({
@@ -179,8 +339,8 @@ export function startApiServer(client: Client, port: number = 2643) {
                         channelId: message.channelId,
                     }), { headers });
                 } catch (error) {
-                    log(`Send DM file error: ${error}`);
-                    return new Response(JSON.stringify({ error: String(error) }), {
+                    log(`Send DM file error: ${error instanceof Error ? error.stack : String(error)}`);
+                    return new Response(JSON.stringify({ error: 'Internal server error' }), {
                         status: 500,
                         headers,
                     });
@@ -238,7 +398,10 @@ export function startApiServer(client: Client, port: number = 2643) {
                     const buttons = body.buttons.map(b => {
                         // Register handler if provided
                         if (b.handler) {
-                            buttonHandlers.set(b.customId, b.handler);
+                            buttonHandlers.set(b.customId, {
+                                value: b.handler,
+                                createdAt: Date.now(),
+                            });
                             log(`Registered button handler: ${b.customId}`);
                         } else {
                             log(`No handler for button: ${b.customId}`);
@@ -270,7 +433,7 @@ export function startApiServer(client: Client, port: number = 2643) {
                     // Extract requestId from button customIds that match "ask_<uuid>_*" pattern
                     body.buttons.forEach(b => {
                         const match = b.customId.match(/^ask_([a-f0-9-]+)_/);
-                        if (match) {
+                        if (match && match[1]) {
                             const requestId = match[1];
                             // Only register once per requestId
                             if (!pendingQuestions.has(requestId)) {
@@ -291,8 +454,8 @@ export function startApiServer(client: Client, port: number = 2643) {
                         messageId: message.id,
                     }), { headers });
                 } catch (error) {
-                    log(`Send buttons error: ${error}`);
-                    return new Response(JSON.stringify({ error: String(error) }), {
+                    log(`Send buttons error: ${error instanceof Error ? error.stack : String(error)}`);
+                    return new Response(JSON.stringify({ error: 'Internal server error' }), {
                         status: 500,
                         headers,
                     });
@@ -323,13 +486,19 @@ export function startApiServer(client: Client, port: number = 2643) {
 
                     // Store the response
                     questionResponses.set(requestId, {
-                        answer: body.data.option,
-                        optionIndex: body.data.optionIndex,
+                        value: {
+                            answer: body.data.option,
+                            optionIndex: body.data.optionIndex,
+                        },
+                        createdAt: Date.now(),
                     });
 
                     // If user clicked "Type answer", track it
                     if (body.data.option === '__type__' && body.data.threadId) {
-                        pendingTypedAnswers.set(body.data.threadId, requestId);
+                        pendingTypedAnswers.set(body.data.threadId, {
+                            value: requestId,
+                            createdAt: Date.now(),
+                        });
                     }
 
                     // Clear TTL timeout if it exists
@@ -346,8 +515,8 @@ export function startApiServer(client: Client, port: number = 2643) {
 
                     return new Response(JSON.stringify({ success: true }), { headers });
                 } catch (error) {
-                    log(`Question response error: ${error}`);
-                    return new Response(JSON.stringify({ error: String(error) }), {
+                    log(`Question response error: ${error instanceof Error ? error.stack : String(error)}`);
+                    return new Response(JSON.stringify({ error: 'Internal server error' }), {
                         status: 500,
                         headers,
                     });
@@ -377,11 +546,16 @@ export function startApiServer(client: Client, port: number = 2643) {
                     return new Response(JSON.stringify({ answered: false }), { headers });
                 }
 
+                const responseValue = response.value;
+                if (responseValue === null || responseValue === undefined) {
+                    return new Response(JSON.stringify({ answered: false }), { headers });
+                }
+
                 // Answered
                 return new Response(JSON.stringify({
                     answered: true,
-                    answer: response.answer,
-                    optionIndex: response.optionIndex,
+                    answer: responseValue.answer,
+                    optionIndex: responseValue.optionIndex,
                 }), { headers });
             }
 

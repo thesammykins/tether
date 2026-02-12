@@ -196,6 +196,14 @@ export class ClaudeAdapter implements AgentAdapter {
     // The actual prompt
     args.push('-p', prompt);
 
+    // Log redacted prompt info (full prompt only with DEBUG env var)
+    if (process.env.DEBUG) {
+      console.log('[claude] Full prompt:', prompt);
+    } else {
+      const first50 = prompt.substring(0, 50).replace(/\n/g, ' ');
+      console.log(`[claude] Prompt: ${prompt.length} chars, first 50: ${first50}...`);
+    }
+
     return args;
   }
 

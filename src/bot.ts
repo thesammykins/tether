@@ -22,7 +22,7 @@ import {
     SlashCommandBuilder,
     type Interaction,
 } from 'discord.js';
-import { existsSync } from 'fs';
+import { existsSync, realpathSync } from 'fs';
 import { homedir } from 'os';
 import { resolve } from 'path';
 import { claudeQueue } from './queue.js';
@@ -60,25 +60,38 @@ function validateWorkingDir(dir: string): string | null {
     // Resolve to absolute path
     const resolved = resolve(dir);
 
-    // If no allowlist configured, just check existence
+    // Check existence first (before realpath)
+    if (!existsSync(resolved)) {
+        return `Directory not found: \`${dir}\``;
+    }
+
+    // Resolve symlinks to prevent path traversal attacks
+    let realPath: string;
+    try {
+        realPath = realpathSync(resolved);
+    } catch (error) {
+        return `Cannot resolve path: \`${dir}\` (${error instanceof Error ? error.message : String(error)})`;
+    }
+
+    // If no allowlist configured, path is valid (already checked existence)
     if (!ALLOWED_DIRS) {
-        if (!existsSync(resolved)) {
-            return `Directory not found: \`${dir}\``;
-        }
         return null;
     }
 
-    // Check against allowlist
-    const isAllowed = ALLOWED_DIRS.some(allowed =>
-        resolved === allowed || resolved.startsWith(allowed + '/')
-    );
+    // Check against allowlist using real paths
+    const isAllowed = ALLOWED_DIRS.some(allowed => {
+        let allowedReal: string;
+        try {
+            allowedReal = realpathSync(allowed);
+        } catch {
+            // If allowed dir doesn't exist or can't be resolved, skip it
+            return false;
+        }
+        return realPath === allowedReal || realPath.startsWith(allowedReal + '/');
+    });
 
     if (!isAllowed) {
         return `Directory not in allowed list. Allowed: ${ALLOWED_DIRS.join(', ')}`;
-    }
-
-    if (!existsSync(resolved)) {
-        return `Directory not found: \`${dir}\``;
     }
 
     return null;
@@ -86,6 +99,14 @@ function validateWorkingDir(dir: string): string | null {
 
 // Force unbuffered logging
 const log = (msg: string) => process.stdout.write(`[bot] ${msg}\n`);
+
+// Helper function to redact message content in logs (preserves full content in DEBUG mode)
+const redactContent = (content: string): string => {
+    if (process.env.DEBUG === 'true') {
+        return content;
+    }
+    return `[content:${content.length}chars]`;
+};
 
 // Helper function to resolve working directory from message or channel config
 function resolveWorkingDir(message: string, channelId: string): { workingDir: string; cleanedMessage: string; error?: string } {
@@ -273,12 +294,14 @@ client.on(Events.InteractionCreate, async (interaction: Interaction) => {
 
     log(`Looking up handler for: ${interaction.customId}`);
     log(`Available handlers: ${Array.from(buttonHandlers.keys()).join(', ') || 'none'}`);
-    const handler = buttonHandlers.get(interaction.customId);
-    if (!handler) {
+    const handlerEntry = buttonHandlers.get(interaction.customId);
+    if (!handlerEntry) {
         log(`No handler found for: ${interaction.customId}`);
         await interaction.reply({ content: 'This button has expired.', ephemeral: true });
         return;
     }
+
+    const handler = handlerEntry.value;
 
     try {
         if (handler.type === 'inline') {
@@ -288,7 +311,12 @@ client.on(Events.InteractionCreate, async (interaction: Interaction) => {
             });
         } else         if (handler.type === 'webhook') {
             await interaction.deferReply({ ephemeral: true });
-            const response = await fetch(handler.url, {
+            // Support both webhookUrl (preferred) and url (legacy) for backwards compatibility
+            const webhookUrl = (handler as any).webhookUrl || (handler as any).url;
+            if (!webhookUrl) {
+                throw new Error('Webhook handler missing URL');
+            }
+            const response = await fetch(webhookUrl, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -359,14 +387,15 @@ client.on(Events.MessageCreate, async (message: Message) => {
         // Typed answer capture — if a pending typed answer exists for this DM channel,
         // store the user's message as the real response instead of queuing it
         if (pendingTypedAnswers.has(dmChannelId)) {
-            const requestId = pendingTypedAnswers.get(dmChannelId)!;
-            questionResponses.set(requestId, { answer: content, optionIndex: -1 });
+            const requestIdEntry = pendingTypedAnswers.get(dmChannelId)!;
+            const requestId = requestIdEntry.value;
+            questionResponses.set(requestId, { value: { answer: content, optionIndex: -1 }, createdAt: Date.now() });
             pendingTypedAnswers.delete(dmChannelId);
             await message.reply('✅ Answer received.');
             return;
         }
 
-        log(`DM from ${message.author.tag}: ${content.slice(0, 80)}...`);
+        log(`DM from ${message.author.tag}: ${redactContent(content)}`);
 
         // DMs use a synthetic "thread" ID based on the DM channel for session tracking.
         // Each DM channel maps 1:1 to a user, so channelId is the session key.
@@ -500,10 +529,11 @@ client.on(Events.MessageCreate, async (message: Message) => {
     // This handles the "✏️ Type answer" flow from `tether ask` in regular channels.
     const channelId = message.channel.id;
     if (pendingTypedAnswers.has(channelId)) {
-        const requestId = pendingTypedAnswers.get(channelId)!;
+        const requestIdEntry = pendingTypedAnswers.get(channelId)!;
+        const requestId = requestIdEntry.value;
         const content = message.content.trim();
         if (content) {
-            questionResponses.set(requestId, { answer: content, optionIndex: -1 });
+            questionResponses.set(requestId, { value: { answer: content, optionIndex: -1 }, createdAt: Date.now() });
             pendingTypedAnswers.delete(channelId);
             await message.reply('✅ Answer received.');
         }
@@ -546,14 +576,15 @@ client.on(Events.MessageCreate, async (message: Message) => {
         // Typed answer capture — if a pending typed answer exists for this thread,
         // store the user's message as the real response instead of queuing it
         if (pendingTypedAnswers.has(thread.id)) {
-            const requestId = pendingTypedAnswers.get(thread.id)!;
-            questionResponses.set(requestId, { answer: threadContent, optionIndex: -1 });
+            const requestIdEntry = pendingTypedAnswers.get(thread.id)!;
+            const requestId = requestIdEntry.value;
+            questionResponses.set(requestId, { value: { answer: threadContent, optionIndex: -1 }, createdAt: Date.now() });
             pendingTypedAnswers.delete(thread.id);
             await message.reply('✅ Answer received.');
             return;
         }
 
-        log(`Thread message from ${message.author.tag}`);
+        log(`Thread message from ${message.author.tag}: ${redactContent(threadContent)}`);
 
         // Show typing indicator
         await thread.sendTyping();
@@ -583,10 +614,10 @@ client.on(Events.MessageCreate, async (message: Message) => {
     // =========================================================================
     if (!isMentioned) return;
 
-    log(`New mention from ${message.author.tag}`);
-
     // Extract message content and resolve working directory
     const rawText = message.content.replace(/<@!?\d+>/g, '').trim();
+    log(`New mention from ${message.author.tag}: ${redactContent(rawText)}`);
+    
     const { workingDir, cleanedMessage, error: workingDirError } = resolveWorkingDir(rawText, message.channelId);
 
     // If path override validation failed, reply with error
@@ -629,7 +660,7 @@ client.on(Events.MessageCreate, async (message: Message) => {
             // Get context from the source channel (not the forum)
             channelContext = await getChannelContext(message.channel as TextChannel);
             if (channelContext) {
-                log(`Channel context: ${channelContext.slice(0, 100)}...`);
+                log(`Channel context: ${redactContent(channelContext)}`);
             }
         } else {
             // Default mode: create a text thread from a status message
@@ -645,7 +676,7 @@ client.on(Events.MessageCreate, async (message: Message) => {
             // Feature: Get channel context for new conversations
             channelContext = await getChannelContext(message.channel as TextChannel);
             if (channelContext) {
-                log(`Channel context: ${channelContext.slice(0, 100)}...`);
+                log(`Channel context: ${redactContent(channelContext)}`);
             }
 
             // Copy the original message content into the thread for context
@@ -793,6 +824,19 @@ async function connectWithBackoff() {
 }
 
 connectWithBackoff();
+
+// Graceful shutdown handlers
+process.on('SIGTERM', () => {
+    log('SIGTERM received, shutting down gracefully...');
+    client.destroy();
+    process.exit(0);
+});
+
+process.on('SIGINT', () => {
+    log('SIGINT received, shutting down gracefully...');
+    client.destroy();
+    process.exit(0);
+});
 
 // Export for external use
 export { client };

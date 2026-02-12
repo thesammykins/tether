@@ -448,4 +448,80 @@ describe('ClaudeAdapter', () => {
       })
     ).rejects.toThrow('Claude CLI failed');
   });
+
+  it('should redact prompt in logs by default', async () => {
+    const mockSpawn = mock((args: string[], options?: any) => {
+      return {
+        stdout: {
+          [Symbol.asyncIterator]: async function* () {
+            yield new TextEncoder().encode(JSON.stringify({ response: 'response' }));
+          },
+        },
+        stderr: {
+          [Symbol.asyncIterator]: async function* () {},
+        },
+        exited: Promise.resolve(0),
+      };
+    });
+
+    (Bun as any).spawn = mockSpawn;
+
+    await adapter.spawn({
+      prompt: 'This is a very long prompt that should be redacted in logs',
+      sessionId: 'sess',
+      resume: false,
+    });
+
+    // Should log redacted version (char count + first 50)
+    expect(consoleLogSpy.mock.calls.some((call: any[]) => 
+      call[0]?.includes('Prompt:') && 
+      call[0]?.includes('chars') && 
+      call[0]?.includes('first 50:')
+    )).toBe(true);
+
+    // Should NOT log the full prompt
+    expect(consoleLogSpy.mock.calls.some((call: any[]) => 
+      call[0] === '[claude] Full prompt:'
+    )).toBe(false);
+  });
+
+  it('should log full prompt when DEBUG env var is set', async () => {
+    const originalDebug = process.env.DEBUG;
+    process.env.DEBUG = '1';
+
+    const mockSpawn = mock((args: string[], options?: any) => {
+      return {
+        stdout: {
+          [Symbol.asyncIterator]: async function* () {
+            yield new TextEncoder().encode(JSON.stringify({ response: 'response' }));
+          },
+        },
+        stderr: {
+          [Symbol.asyncIterator]: async function* () {},
+        },
+        exited: Promise.resolve(0),
+      };
+    });
+
+    (Bun as any).spawn = mockSpawn;
+
+    const testPrompt = 'Secret test prompt';
+    await adapter.spawn({
+      prompt: testPrompt,
+      sessionId: 'sess',
+      resume: false,
+    });
+
+    // Should log full prompt with DEBUG=1
+    expect(consoleLogSpy.mock.calls.some((call: any[]) => 
+      call[0]?.includes('Full prompt:') && call[1] === testPrompt
+    )).toBe(true);
+
+    // Restore
+    if (originalDebug !== undefined) {
+      process.env.DEBUG = originalDebug;
+    } else {
+      delete process.env.DEBUG;
+    }
+  });
 });

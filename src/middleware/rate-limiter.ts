@@ -7,8 +7,14 @@
  * - Sufficient for single-instance bot
  */
 
-const RATE_LIMIT_REQUESTS = parseInt(process.env.RATE_LIMIT_REQUESTS || '5');
-const RATE_LIMIT_WINDOW_MS = parseInt(process.env.RATE_LIMIT_WINDOW_MS || '60000');
+// Safe parseInt with NaN fallback
+function safeParseInt(value: string | undefined, defaultValue: number): number {
+  const parsed = parseInt(value || String(defaultValue), 10);
+  return Number.isNaN(parsed) ? defaultValue : parsed;
+}
+
+const RATE_LIMIT_REQUESTS = safeParseInt(process.env.RATE_LIMIT_REQUESTS, 10);
+const RATE_LIMIT_WINDOW_MS = safeParseInt(process.env.RATE_LIMIT_WINDOW_MS, 60000);
 
 // In-memory sliding window: userId -> array of timestamps
 const userTimestamps = new Map<string, number[]>();
@@ -37,6 +43,29 @@ export function checkRateLimit(userId: string): boolean {
   userTimestamps.set(userId, timestamps);
   return true;
 }
+
+/**
+ * Cleanup expired entries from userTimestamps map.
+ * Removes users whose all timestamps are older than the rate limit window.
+ */
+function cleanupExpiredEntries(): void {
+  const now = Date.now();
+  const windowStart = now - RATE_LIMIT_WINDOW_MS;
+  
+  for (const [userId, timestamps] of userTimestamps.entries()) {
+    // If all timestamps are expired, remove the user entry
+    const hasValidTimestamp = timestamps.some(t => t > windowStart);
+    if (!hasValidTimestamp) {
+      userTimestamps.delete(userId);
+    }
+  }
+}
+
+// Run cleanup every 60 seconds
+const cleanupInterval = setInterval(cleanupExpiredEntries, 60000);
+
+// Export cleanup interval for testing
+export { cleanupInterval };
 
 /**
  * Reset all rate limits (exported for testing).

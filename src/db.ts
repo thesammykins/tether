@@ -72,24 +72,13 @@ db.run(`
     )
 `);
 
-// Create rate_limits table
-db.run(`
-    CREATE TABLE IF NOT EXISTS rate_limits (
-        user_id TEXT NOT NULL,
-        timestamp INTEGER NOT NULL
-    )
-`);
-
-// Create index for rate limit cleanup
-db.run(`
-    CREATE INDEX IF NOT EXISTS idx_rate_limits_timestamp
-    ON rate_limits(timestamp)
-`);
+// Note: rate limiting is handled in-memory, see src/middleware/rate-limiter.ts
 
 console.log(`[db] SQLite database ready at ${DB_PATH}`);
 
-// In-memory cache for channel configs (TTL: 5 minutes)
-const CACHE_TTL_MS = 5 * 60 * 1000;
+// In-memory cache for channel configs (TTL: 60 seconds)
+// Note: setChannelConfig() invalidates cache on write (defense-in-depth)
+const CACHE_TTL_MS = 60 * 1000;
 const channelConfigCache = new Map<string, { data: { working_dir: string | null } | null; expiresAt: number }>();
 
 // Helper functions for channel config
