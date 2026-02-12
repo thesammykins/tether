@@ -20,6 +20,7 @@ describe('ClaudeAdapter', () => {
 
   afterEach(() => {
     (Bun as any).spawn = originalSpawn;
+    delete process.env.CLAUDE_BIN;
   });
 
   it('should have name "claude"', () => {
@@ -28,8 +29,8 @@ describe('ClaudeAdapter', () => {
 
   it('should resolve binary path using which', async () => {
     const mockSpawn = mock((args: string[], options?: any) => {
-      // which claude
-      if (args[0] === 'which' && args[1] === 'claude') {
+      // which/where claude
+      if ((args[0] === 'which' || args[0] === 'where.exe') && args[1] === 'claude') {
         return {
           stdout: {
             [Symbol.asyncIterator]: async function* () {
@@ -79,14 +80,14 @@ describe('ClaudeAdapter', () => {
     });
 
     expect(consoleLogSpy.mock.calls.some((call: any[]) => 
-      call[0]?.includes('Binary found at')
+      call[0]?.includes('Binary resolved')
     )).toBe(true);
   });
 
   it('should warn about known buggy versions', async () => {
     const mockSpawn = mock((args: string[], options?: any) => {
-      // which claude
-      if (args[0] === 'which' && args[1] === 'claude') {
+      // which/where claude
+      if ((args[0] === 'which' || args[0] === 'where.exe') && args[1] === 'claude') {
         return {
           stdout: {
             [Symbol.asyncIterator]: async function* () {
@@ -381,6 +382,51 @@ describe('ClaudeAdapter', () => {
 
     expect(result.output).toBe('parsed response');
     expect(result.sessionId).toBe('sess');
+  });
+
+  it('should prefer CLAUDE_BIN when set', async () => {
+    process.env.CLAUDE_BIN = '/custom/claude';
+    const mockSpawn = mock((args: string[], options?: any) => {
+      if (args.includes('--version')) {
+        return {
+          stdout: {
+            [Symbol.asyncIterator]: async function* () {
+              yield new TextEncoder().encode('1.0.70\n');
+            },
+          },
+          stderr: {
+            [Symbol.asyncIterator]: async function* () {},
+          },
+          exited: Promise.resolve(0),
+        };
+      }
+
+      return {
+        stdout: {
+          [Symbol.asyncIterator]: async function* () {
+            yield new TextEncoder().encode(JSON.stringify({ response: 'env response' }));
+          },
+        },
+        stderr: {
+          [Symbol.asyncIterator]: async function* () {},
+        },
+        exited: Promise.resolve(0),
+      };
+    });
+
+    (Bun as any).spawn = mockSpawn;
+
+    await adapter.spawn({
+      prompt: 'test',
+      sessionId: 'sess',
+      resume: false,
+    });
+
+    const spawnCall = mockSpawn.mock.calls.findLast((call: any[]) =>
+      Array.isArray(call[0]) && call[0].includes('--print')
+    );
+
+    expect(spawnCall?.[0][0]).toBe('/custom/claude');
   });
 
   it('should handle non-JSON output', async () => {

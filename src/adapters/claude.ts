@@ -1,4 +1,5 @@
 import type { AgentAdapter, SpawnOptions, SpawnResult } from './types.js';
+import { getHomeCandidate, getSystemBinaryCandidates, resolveBinary, resolveNpmGlobalBinary } from './resolve-binary.js';
 
 /**
  * Claude CLI Adapter
@@ -32,29 +33,43 @@ let cachedBinaryPath: string | null = null;
  * then falls back to checking `npx @anthropic-ai/claude-code` availability.
  */
 async function getClaudeBinaryPath(): Promise<string> {
+  const envValue = process.env.CLAUDE_BIN;
+  if (envValue) {
+    if (cachedBinaryPath !== envValue) {
+      cachedBinaryPath = envValue;
+      console.log(`[claude] Binary resolved (env): ${envValue}`);
+    }
+    return cachedBinaryPath;
+  }
+
   if (cachedBinaryPath) {
     return cachedBinaryPath;
   }
 
-  const isWindows = process.platform === 'win32';
-  const whichCommand = isWindows ? 'where.exe' : 'which';
+  const resolved = await resolveBinary({
+    name: 'claude',
+    candidates: [
+      ...getSystemBinaryCandidates('claude'),
+      getHomeCandidate('.claude', 'bin', 'claude'),
+      getHomeCandidate('.local', 'bin', 'claude'),
+    ],
+    windowsCandidates: [
+      getHomeCandidate('.claude', 'bin', 'claude.exe'),
+      getHomeCandidate('.local', 'bin', 'claude.exe'),
+    ],
+  });
 
-  try {
-    const proc = Bun.spawn([whichCommand, 'claude'], {
-      stdout: 'pipe',
-      stderr: 'pipe',
-    });
+  if (resolved) {
+    cachedBinaryPath = resolved.path;
+    console.log(`[claude] Binary resolved (${resolved.source}): ${resolved.path}`);
+    return cachedBinaryPath;
+  }
 
-    const stdout = await new Response(proc.stdout).text();
-    const exitCode = await proc.exited;
-
-    if (exitCode === 0 && stdout.trim()) {
-      cachedBinaryPath = 'claude';
-      console.log(`[claude] Binary found at: ${stdout.trim()}`);
-      return cachedBinaryPath;
-    }
-  } catch (err) {
-    // Fall through to npx check
+  const npmBinary = await resolveNpmGlobalBinary('claude');
+  if (npmBinary) {
+    cachedBinaryPath = npmBinary;
+    console.log(`[claude] Binary resolved (npm): ${npmBinary}`);
+    return cachedBinaryPath;
   }
 
   // Try npx fallback
@@ -71,12 +86,12 @@ async function getClaudeBinaryPath(): Promise<string> {
       console.log('[claude] Binary not in PATH, will use: npx @anthropic-ai/claude-code');
       return cachedBinaryPath;
     }
-  } catch (err) {
+  } catch {
     // Fall through to error
   }
 
   throw new Error(
-    'Claude CLI not found. Install with: npm install -g @anthropic-ai/claude-code'
+    'Claude CLI not found. Install it or set CLAUDE_BIN to the binary path.'
   );
 }
 
