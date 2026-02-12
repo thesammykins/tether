@@ -28,15 +28,49 @@ export const questionResponses = new Map<string, { answer: string; optionIndex: 
 // Track which threads are waiting for a typed answer
 export const pendingTypedAnswers = new Map<string, string>(); // threadId → requestId
 
+// Pending questions with TTL tracking
+type PendingQuestion = {
+    timeoutId: NodeJS.Timeout;
+};
+export const pendingQuestions = new Map<string, PendingQuestion>();
+
+// Binary file extensions - files with these extensions should be base64 encoded
+const BINARY_EXTENSIONS = new Set([
+    '.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.ico', '.svg',
+    '.pdf', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx',
+    '.zip', '.tar', '.gz', '.bz2', '.7z', '.rar',
+    '.mp3', '.mp4', '.avi', '.mov', '.mkv', '.flv', '.wmv',
+    '.woff', '.woff2', '.ttf', '.otf', '.eot',
+    '.bin', '.exe', '.dll', '.so', '.dylib',
+]);
+
 /**
  * Start the HTTP API server
  */
 export function startApiServer(client: Client, port: number = 2643) {
+    // Optional API token authentication
+    const apiToken = process.env.API_TOKEN;
+    const hostname = process.env.TETHER_API_HOST || '127.0.0.1';
+    
     const server = Bun.serve({
         port,
+        hostname,
         async fetch(req) {
             const url = new URL(req.url);
             const headers = { 'Content-Type': 'application/json' };
+
+            // Authentication check - skip for /health endpoint
+            if (apiToken && url.pathname !== '/health') {
+                const authHeader = req.headers.get('Authorization');
+                const expectedAuth = `Bearer ${apiToken}`;
+                
+                if (!authHeader || authHeader !== expectedAuth) {
+                    return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+                        status: 401,
+                        headers,
+                    });
+                }
+            }
 
             // Health check
             if (url.pathname === '/health' && req.method === 'GET') {
@@ -74,6 +108,7 @@ export function startApiServer(client: Client, port: number = 2643) {
                         fileName: string;
                         fileContent: string;
                         content?: string;
+                        isBase64?: boolean;
                     };
 
                     const channel = await client.channels.fetch(body.channelId);
@@ -84,7 +119,12 @@ export function startApiServer(client: Client, port: number = 2643) {
                         });
                     }
 
-                    const buffer = Buffer.from(body.fileContent, 'utf-8');
+                    // Determine encoding - check if file is binary based on extension
+                    const ext = body.fileName.toLowerCase().match(/\.[^.]+$/)?.[0];
+                    const isBinary = ext ? BINARY_EXTENSIONS.has(ext) : false;
+                    const encoding = body.isBase64 || isBinary ? 'base64' : 'utf-8';
+                    
+                    const buffer = Buffer.from(body.fileContent, encoding);
                     const message = await (channel as TextChannel).send({
                         content: body.content || undefined,
                         files: [{
@@ -114,10 +154,17 @@ export function startApiServer(client: Client, port: number = 2643) {
                         fileName: string;
                         fileContent: string;
                         content?: string;
+                        isBase64?: boolean;
                     };
 
                     const user = await client.users.fetch(body.userId);
-                    const buffer = Buffer.from(body.fileContent, 'utf-8');
+                    
+                    // Determine encoding - check if file is binary based on extension
+                    const ext = body.fileName.toLowerCase().match(/\.[^.]+$/)?.[0];
+                    const isBinary = ext ? BINARY_EXTENSIONS.has(ext) : false;
+                    const encoding = body.isBase64 || isBinary ? 'base64' : 'utf-8';
+                    
+                    const buffer = Buffer.from(body.fileContent, encoding);
                     const message = await user.send({
                         content: body.content || undefined,
                         files: [{
@@ -156,7 +203,7 @@ export function startApiServer(client: Client, port: number = 2643) {
                         buttons: Array<{
                             label: string;
                             customId: string;
-                            style: 'primary' | 'secondary' | 'success' | 'danger';
+                            style: number | 'primary' | 'secondary' | 'success' | 'danger';
                             handler?: ButtonHandler;
                         }>;
                     };
@@ -180,7 +227,7 @@ export function startApiServer(client: Client, port: number = 2643) {
                         return embed;
                     });
 
-                    // Build button row
+                    // Build button row - handle both number and string styles
                     const styleMap: Record<string, ButtonStyle> = {
                         primary: ButtonStyle.Primary,
                         secondary: ButtonStyle.Secondary,
@@ -196,10 +243,19 @@ export function startApiServer(client: Client, port: number = 2643) {
                         } else {
                             log(`No handler for button: ${b.customId}`);
                         }
+                        
+                        // Handle both number styles (from CLI) and string styles (legacy)
+                        let buttonStyle: ButtonStyle;
+                        if (typeof b.style === 'number') {
+                            buttonStyle = b.style as ButtonStyle;
+                        } else {
+                            buttonStyle = styleMap[b.style] || ButtonStyle.Primary;
+                        }
+                        
                         return new ButtonBuilder()
                             .setCustomId(b.customId)
                             .setLabel(b.label)
-                            .setStyle(styleMap[b.style] || ButtonStyle.Primary);
+                            .setStyle(buttonStyle);
                     });
 
                     const row = new ActionRowBuilder<ButtonBuilder>().addComponents(buttons);
@@ -208,6 +264,26 @@ export function startApiServer(client: Client, port: number = 2643) {
                         content: body.content || undefined,
                         embeds: embeds || undefined,
                         components: [row],
+                    });
+
+                    // Register question buttons with TTL (5 minutes)
+                    // Extract requestId from button customIds that match "ask_<uuid>_*" pattern
+                    body.buttons.forEach(b => {
+                        const match = b.customId.match(/^ask_([a-f0-9-]+)_/);
+                        if (match) {
+                            const requestId = match[1];
+                            // Only register once per requestId
+                            if (!pendingQuestions.has(requestId)) {
+                                const timeoutId = setTimeout(() => {
+                                    pendingQuestions.delete(requestId);
+                                    questionResponses.delete(requestId);
+                                    log(`Question ${requestId} expired after 5 minutes`);
+                                }, 300_000); // 5 minutes
+                                
+                                pendingQuestions.set(requestId, { timeoutId });
+                                log(`Registered question ${requestId} with 5-minute TTL`);
+                            }
+                        }
                     });
 
                     return new Response(JSON.stringify({
@@ -254,6 +330,13 @@ export function startApiServer(client: Client, port: number = 2643) {
                     // If user clicked "Type answer", track it
                     if (body.data.option === '__type__' && body.data.threadId) {
                         pendingTypedAnswers.set(body.data.threadId, requestId);
+                    }
+
+                    // Clear TTL timeout if it exists
+                    const pending = pendingQuestions.get(requestId);
+                    if (pending) {
+                        clearTimeout(pending.timeoutId);
+                        pendingQuestions.delete(requestId);
                     }
 
                     // Auto-cleanup after 10 minutes
@@ -310,7 +393,7 @@ export function startApiServer(client: Client, port: number = 2643) {
         },
     });
 
-    log(`HTTP API server listening on port ${port}`);
+    log(`HTTP API server listening on ${hostname}:${port}`);
     return server;
 }
 

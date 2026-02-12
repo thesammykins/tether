@@ -31,7 +31,7 @@
  */
 
 import { spawn, spawnSync } from 'bun';
-import { existsSync, readFileSync, writeFileSync, mkdirSync, cpSync } from 'fs';
+import { existsSync, readFileSync, writeFileSync, mkdirSync, cpSync, symlinkSync, lstatSync, readlinkSync, unlinkSync } from 'fs';
 import { join, dirname } from 'path';
 import * as readline from 'readline';
 import { homedir } from 'os';
@@ -80,9 +80,16 @@ async function prompt(question: string): Promise<string> {
 
 async function apiCall(endpoint: string, body: any): Promise<any> {
     try {
+        const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+        
+        // Add Authorization header if API_TOKEN is set
+        if (process.env.API_TOKEN) {
+            headers['Authorization'] = `Bearer ${process.env.API_TOKEN}`;
+        }
+        
         const response = await fetch(`${API_BASE}${endpoint}`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers,
             body: JSON.stringify(body),
         });
         const data = await response.json();
@@ -689,28 +696,106 @@ async function setup() {
         console.log('⚠ Redis not running. Start it with: redis-server');
     }
 
-    // Check Claude CLI
-    const claude = spawnSync(['claude', '--version'], { stdout: 'pipe', stderr: 'pipe' });
-    if (claude.exitCode === 0) {
-        console.log('✓ Claude CLI installed');
+    // Check Agent CLI based on TETHER_AGENT env var
+    const agentType = process.env.TETHER_AGENT || 'claude';
+    let agentBinary: string;
+    let agentInstallUrl: string;
+    
+    switch (agentType) {
+        case 'claude-code':
+        case 'claude':
+            agentBinary = 'claude';
+            agentInstallUrl = 'https://claude.ai/code';
+            break;
+        case 'opencode':
+            agentBinary = 'opencode';
+            agentInstallUrl = 'https://github.com/getcursor/opencode';
+            break;
+        case 'codex-cli':
+        case 'codex':
+            agentBinary = 'codex';
+            agentInstallUrl = 'https://github.com/getcursor/codex';
+            break;
+        default:
+            agentBinary = agentType;
+            agentInstallUrl = '(unknown agent type)';
+    }
+    
+    const agentCheck = spawnSync([agentBinary, '--version'], { stdout: 'pipe', stderr: 'pipe' });
+    if (agentCheck.exitCode === 0) {
+        console.log(`✓ ${agentBinary} CLI installed`);
     } else {
-        console.log('⚠ Claude CLI not found. Install from: https://claude.ai/code');
+        console.log(`⚠ ${agentBinary} CLI not found. Install from: ${agentInstallUrl}`);
     }
 
-    // Install Claude Code skill
-    const skillsDir = join(homedir(), '.claude', 'skills', 'cord');
-    const cordRoot = join(dirname(import.meta.dir));
-    const sourceSkillsDir = join(cordRoot, 'skills', 'cord');
+    // Install Tether skill for agent (legacy Claude Code location)
+    const legacySkillsDir = join(homedir(), '.claude', 'skills', 'tether');
+    const tetherRoot = dirname(import.meta.dir);
+    const sourceSkillsDir = join(tetherRoot, 'skills', 'tether');
 
     if (existsSync(sourceSkillsDir)) {
-        console.log('\n📚 Claude Code Skill');
-        console.log('   Teaches your assistant how to send Distether messages, embeds,');
+        console.log('\n📚 Tether Skill (Legacy Claude Code location)');
+        console.log('   Teaches your assistant how to send Discord messages, embeds,');
         console.log('   files, and interactive buttons.');
-        const installSkill = await prompt('Install skill? (Y/n): ');
+        const installSkill = await prompt('Install skill to ~/.claude/skills/tether? (Y/n): ');
         if (installSkill.toLowerCase() !== 'n') {
-            mkdirSync(skillsDir, { recursive: true });
-            cpSync(sourceSkillsDir, skillsDir, { recursive: true });
-            console.log(`✓ Skill installed to ${skillsDir}`);
+            mkdirSync(legacySkillsDir, { recursive: true });
+            cpSync(sourceSkillsDir, legacySkillsDir, { recursive: true });
+            console.log(`✓ Skill installed to ${legacySkillsDir}`);
+        }
+    }
+
+    // Symlink skill to standard location (~/.agents/skills/tether)
+    const standardSkillsDir = join(homedir(), '.agents', 'skills', 'tether');
+    
+    if (existsSync(sourceSkillsDir)) {
+        console.log('\n📚 Tether Skill (Standard location for all agents)');
+        console.log('   Symlinking to ~/.agents/skills/tether for OpenCode, Codex, etc.');
+        
+        // Create ~/.agents/skills/ if it doesn't exist
+        mkdirSync(join(homedir(), '.agents', 'skills'), { recursive: true });
+        
+        // Check if symlink already exists
+        let shouldCreateSymlink = true;
+        if (existsSync(standardSkillsDir)) {
+            try {
+                const stats = lstatSync(standardSkillsDir);
+                if (stats.isSymbolicLink()) {
+                    const target = readlinkSync(standardSkillsDir);
+                    if (target === sourceSkillsDir) {
+                        console.log(`✓ Symlink already exists and points to correct location`);
+                        shouldCreateSymlink = false;
+                    } else {
+                        console.log(`⚠ Symlink exists but points to: ${target}`);
+                        const overwrite = await prompt('Overwrite? (Y/n): ');
+                        if (overwrite.toLowerCase() !== 'n') {
+                            unlinkSync(standardSkillsDir);
+                        } else {
+                            shouldCreateSymlink = false;
+                        }
+                    }
+                } else {
+                    console.log(`⚠ ${standardSkillsDir} exists but is not a symlink`);
+                    const overwrite = await prompt('Remove and create symlink? (Y/n): ');
+                    if (overwrite.toLowerCase() !== 'n') {
+                        unlinkSync(standardSkillsDir);
+                    } else {
+                        shouldCreateSymlink = false;
+                    }
+                }
+            } catch (err) {
+                console.log(`⚠ Error checking existing path: ${err}`);
+                shouldCreateSymlink = false;
+            }
+        }
+        
+        if (shouldCreateSymlink) {
+            try {
+                symlinkSync(sourceSkillsDir, standardSkillsDir, 'dir');
+                console.log(`✓ Symlinked ${standardSkillsDir} → ${sourceSkillsDir}`);
+            } catch (err) {
+                console.log(`⚠ Failed to create symlink: ${err}`);
+            }
         }
     }
 

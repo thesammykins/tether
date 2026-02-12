@@ -121,3 +121,9 @@ export function setChannelConfig(channelId: string, workingDir: string): void {
     // Invalidate cache
     channelConfigCache.delete(channelId);
 }
+
+export function updateSessionId(threadId: string, sessionId: string): void {
+    db.run(`
+        UPDATE threads SET session_id = ? WHERE thread_id = ?
+    `, [sessionId, threadId]);
+}

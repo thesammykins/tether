@@ -11,9 +11,12 @@ import type { AgentAdapter, SpawnOptions, SpawnResult } from '../../src/adapters
 
 describe('Worker Adapter Integration', () => {
   describe('Adapter Registry', () => {
-    it('should return Claude adapter by default', () => {
+    it('should return Claude adapter by default when AGENT_TYPE unset', () => {
+      const original = process.env.AGENT_TYPE;
+      delete process.env.AGENT_TYPE;
       const adapter = getAdapter();
       expect(adapter.name).toBe('claude');
+      if (original) process.env.AGENT_TYPE = original;
     });
     
     it('should return Claude adapter when AGENT_TYPE=claude', () => {

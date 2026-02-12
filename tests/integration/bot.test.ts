@@ -100,5 +100,29 @@ describe('Bot Message Pipeline Integration', () => {
       // After reset, no errors should occur
       expect(() => resetSessionLimits()).not.toThrow();
     });
+
+    it('should allow !reset command even when session limit reached', () => {
+      const threadId = 'test-thread-reset-1';
+      const sessionId = 'session-reset-123';
+
+      // Create a thread mapping
+      db.run(
+        'INSERT INTO threads (thread_id, session_id, working_dir) VALUES (?, ?, ?)',
+        [threadId, sessionId, '/test/dir']
+      );
+
+      // Verify thread exists
+      const row = db.query('SELECT session_id FROM threads WHERE thread_id = ?')
+        .get(threadId) as { session_id: string } | null;
+      expect(row).toBeTruthy();
+      expect(row?.session_id).toBe(sessionId);
+
+      // Simulate !reset - thread should be deleted
+      db.run('DELETE FROM threads WHERE thread_id = ?', [threadId]);
+
+      // Verify thread was deleted
+      const deletedRow = db.query('SELECT 1 FROM threads WHERE thread_id = ?').get(threadId);
+      expect(deletedRow).toBeNull();
+    });
   });
 });

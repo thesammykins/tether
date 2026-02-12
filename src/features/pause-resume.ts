@@ -15,7 +15,7 @@ import { db } from '../db.js';
 const PAUSE_KEYWORDS = ['pause', 'stop', 'hold'];
 const RESUME_KEYWORDS = ['resume', 'continue', 'unpause'];
 
-export function handlePauseResume(message: Message): { paused: boolean } {
+export function handlePauseResume(message: Message): { paused: boolean; resumed?: boolean; heldMessages?: Array<{ author_id: string; content: string }> } {
   const content = message.content.toLowerCase().trim();
   const threadId = message.channel.isThread() ? message.channel.id : null;
   
@@ -24,8 +24,8 @@ export function handlePauseResume(message: Message): { paused: boolean } {
   // Check for resume command
   if (RESUME_KEYWORDS.some(kw => content === kw || content === `!${kw}`)) {
     resumeThread(threadId);
-    // Don't mark as paused — let the message through to process held messages
-    return { paused: false };
+    const heldMessages = getHeldMessages(threadId);
+    return { paused: false, resumed: true, heldMessages };
   }
   
   // Check for pause command

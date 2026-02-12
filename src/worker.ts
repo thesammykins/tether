@@ -12,6 +12,7 @@ import IORedis from 'ioredis';
 import { getAdapter } from './adapters/registry.js';
 import { sendToThread } from './discord.js';
 import { isAway } from './features/brb.js';
+import { updateSessionId } from './db.js';
 import type { ClaudeJob } from './queue.js';
 
 const log = (msg: string) => process.stdout.write(`[worker] ${msg}\n`);
@@ -25,7 +26,7 @@ const connection = new IORedis({
 const worker = new Worker<ClaudeJob>(
     'claude',
     async (job: Job<ClaudeJob>) => {
-        const { prompt, threadId, sessionId, resume, username, workingDir } = job.data;
+        const { prompt, threadId, sessionId, resume, username, workingDir, channelContext } = job.data;
 
         log(`Processing job ${job.id} for ${username}`);
         log(`Session: ${sessionId}, Resume: ${resume}`);
@@ -35,8 +36,13 @@ const worker = new Worker<ClaudeJob>(
             const adapter = getAdapter();
             log(`Using adapter: ${adapter.name}`);
 
-            // If user is away (BRB mode), prepend guidance to use tether ask CLI
+            // Prepend channel context if provided (new conversations only)
             let effectivePrompt = prompt;
+            if (channelContext) {
+                effectivePrompt = `${channelContext}\n\n${effectivePrompt}`;
+            }
+
+            // If user is away (BRB mode), prepend guidance to use tether ask CLI
             if (isAway(threadId)) {
                 const brbPrefix = [
                     '[IMPORTANT: The user is currently away from this conversation.',
@@ -59,6 +65,12 @@ const worker = new Worker<ClaudeJob>(
                 resume,
                 workingDir,
             });
+
+            // Persist session ID if adapter returned one and it differs from current
+            if (result.sessionId && result.sessionId !== sessionId) {
+                updateSessionId(threadId, result.sessionId);
+                log(`Updated session ID for thread ${threadId}: ${result.sessionId}`);
+            }
 
             // Send response to Discord thread
             await sendToThread(threadId, result.output);

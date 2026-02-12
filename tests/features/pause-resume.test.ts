@@ -164,8 +164,55 @@ describe('pause-resume', () => {
       expect(isThreadPausedExport(id)).toBe(true);
       
       // Then resume with different keywords
-      handlePauseResume(mockMessage(keywords[i], id));
+      handlePauseResume(mockMessage(keywords[i] as string, id));
       expect(isThreadPausedExport(id)).toBe(false);
     });
+  });
+
+  test('resume returns resumed: true and heldMessages array', () => {
+    const threadId = 'thread-13';
+    
+    // Pause the thread
+    handlePauseResume(mockMessage('pause', threadId, 'user-1'));
+    
+    // Send messages while paused
+    handlePauseResume(mockMessage('first message', threadId, 'user-2'));
+    handlePauseResume(mockMessage('second message', threadId, 'user-3'));
+    handlePauseResume(mockMessage('third message', threadId, 'user-2'));
+    
+    // Resume and check result
+    const result = handlePauseResume(mockMessage('resume', threadId, 'user-1'));
+    
+    expect(result.paused).toBe(false);
+    expect(result.resumed).toBe(true);
+    expect(result.heldMessages).toBeDefined();
+    expect(result.heldMessages?.length).toBe(3);
+    
+    // Type guard to ensure heldMessages exists
+    expect(result.heldMessages).toBeDefined();
+    const messages = result.heldMessages;
+    if (messages && messages.length >= 3) {
+      expect(messages[0].content).toBe('first message');
+      expect(messages[0].author_id).toBe('user-2');
+      expect(messages[1].content).toBe('second message');
+      expect(messages[1].author_id).toBe('user-3');
+      expect(messages[2].content).toBe('third message');
+      expect(messages[2].author_id).toBe('user-2');
+    }
+  });
+
+  test('resume with no held messages returns empty array', () => {
+    const threadId = 'thread-14';
+    
+    // Pause the thread
+    handlePauseResume(mockMessage('pause', threadId, 'user-1'));
+    
+    // Resume immediately without sending messages
+    const result = handlePauseResume(mockMessage('resume', threadId, 'user-1'));
+    
+    expect(result.paused).toBe(false);
+    expect(result.resumed).toBe(true);
+    expect(result.heldMessages).toBeDefined();
+    expect(result.heldMessages?.length).toBe(0);
   });
 });

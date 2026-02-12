@@ -162,7 +162,7 @@ client.once(Events.ClientReady, async (c) => {
     }
 
     // Start HTTP API server
-    const apiPort = parseInt(process.env.API_PORT || '2643');
+    const apiPort = parseInt(process.env.TETHER_API_PORT || '2643');
     startApiServer(client, apiPort);
 });
 
@@ -312,16 +312,16 @@ client.on(Events.MessageCreate, async (message: Message) => {
         await (message.channel as DMChannel).sendTyping();
 
         if (mapping) {
-            // Check session limits for ongoing DM session
-            if (!checkSessionLimits(dmChannelId)) {
-                await message.reply('⚠️ Session limit reached. Send `!reset` to start a new session.');
-                return;
-            }
-
-            // Handle !reset to start fresh DM session
+            // Handle !reset to start fresh DM session (BEFORE session limit check)
             if (content.toLowerCase() === '!reset') {
                 db.run('DELETE FROM threads WHERE thread_id = ?', [dmChannelId]);
                 await message.reply('🔄 Session reset. Your next message starts a new conversation.');
+                return;
+            }
+
+            // Check session limits for ongoing DM session
+            if (!checkSessionLimits(dmChannelId)) {
+                await message.reply('⚠️ Session limit reached. Send `!reset` to start a new session.');
                 return;
             }
 
@@ -386,6 +386,42 @@ client.on(Events.MessageCreate, async (message: Message) => {
     const pauseState = handlePauseResume(message);
     if (pauseState.paused) {
         // Message will be held in held_messages table
+        return;
+    }
+    
+    // If resumed, replay held messages
+    if (pauseState.resumed) {
+        const heldCount = pauseState.heldMessages?.length || 0;
+        if (heldCount > 0) {
+            await message.reply(`✅ Resuming — replaying ${heldCount} held message${heldCount !== 1 ? 's' : ''}...`);
+            
+            // Look up session for this thread
+            const threadId = message.channel.id;
+            const mapping = db.query('SELECT session_id, working_dir FROM threads WHERE thread_id = ?')
+                .get(threadId) as { session_id: string; working_dir: string | null } | null;
+            
+            if (mapping) {
+                const workingDir = mapping.working_dir ||
+                    getChannelConfigCached(message.channel.isThread() ? message.channel.parentId || '' : '')?.working_dir ||
+                    process.env.CLAUDE_WORKING_DIR ||
+                    process.cwd();
+                
+                // Replay each held message in order
+                for (const held of pauseState.heldMessages || []) {
+                    await claudeQueue.add('process', {
+                        prompt: held.content,
+                        threadId,
+                        sessionId: mapping.session_id,
+                        resume: true,
+                        userId: held.author_id,
+                        username: 'held-message', // We don't have username stored
+                        workingDir,
+                    });
+                }
+            }
+        } else {
+            await message.reply('✅ Resumed (no held messages).');
+        }
         return;
     }
 
@@ -498,6 +534,7 @@ client.on(Events.MessageCreate, async (message: Message) => {
     // This allows us to update the status message later (Processing... → Done)
     let statusMessage;
     let thread;
+    let channelContext = '';
     try {
         // Post status message in the channel
         statusMessage = await (message.channel as TextChannel).send('Processing...');
@@ -512,7 +549,7 @@ client.on(Events.MessageCreate, async (message: Message) => {
         });
 
         // Feature: Get channel context for new conversations
-        const channelContext = await getChannelContext(message.channel as TextChannel);
+        channelContext = await getChannelContext(message.channel as TextChannel);
         if (channelContext) {
             log(`Channel context: ${channelContext.slice(0, 100)}...`);
         }
@@ -560,6 +597,7 @@ client.on(Events.MessageCreate, async (message: Message) => {
         userId: message.author.id,
         username: message.author.tag,
         workingDir,
+        channelContext,
     });
 });
 
