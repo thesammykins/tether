@@ -5,6 +5,20 @@ import { CodexAdapter, _resetBinaryCache } from '../../src/adapters/codex.js';
 // Use a path that exists on ALL platforms (macOS, Linux CI) for which mock results
 const REAL_BIN_PATH = process.execPath;
 
+/** Create a mock FileSink that captures written data */
+function createMockStdin() {
+  const chunks: string[] = [];
+  return {
+    write(data: string | Uint8Array) {
+      chunks.push(typeof data === 'string' ? data : new TextDecoder().decode(data));
+    },
+    end() {},
+    flush() {},
+    getWritten() { return chunks.join(''); },
+    chunks,
+  };
+}
+
 describe('CodexAdapter', () => {
   let adapter: CodexAdapter;
 
@@ -22,7 +36,8 @@ describe('CodexAdapter', () => {
   });
 
   it('should construct correct CLI args for new session', async () => {
-    const mockSpawn = mock((args: string[], options: any) => {
+    const stdinMock = createMockStdin();
+    const mockSpawn = mock((args: string[], options: unknown) => {
       if (args[0] === 'which' || args[0] === 'where.exe') {
         return {
           stdout: {
@@ -38,6 +53,7 @@ describe('CodexAdapter', () => {
       }
 
       return {
+        stdin: stdinMock,
         stdout: {
           [Symbol.asyncIterator]: async function* () {
             yield new TextEncoder().encode(JSON.stringify({ output: 'test response', sessionId: 'auto-gen-789' }));
@@ -61,22 +77,27 @@ describe('CodexAdapter', () => {
       });
 
       expect(mockSpawn).toHaveBeenCalled();
-      const [args] = mockSpawn.mock.calls.findLast((call: any[]) =>
+      const [args, options] = mockSpawn.mock.calls.findLast((call: any[]) =>
         Array.isArray(call[0]) && call[0].includes('exec')
-      ) ?? [[]];
+      ) ?? [[], {}];
 
       expect(args[0]).toBe(REAL_BIN_PATH);
       expect(args).toContain('exec');
       expect(args).toContain('--json');
-      expect(args).toContain('test prompt');
+      // Prompt is piped via stdin, NOT in args
+      expect(args).not.toContain('test prompt');
+      expect(stdinMock.getWritten()).toBe('test prompt');
       expect(args).not.toContain('resume');
+      // stdin: 'pipe' is requested
+      expect((options as Record<string, unknown>).stdin).toBe('pipe');
     } finally {
       (Bun as any).spawn = originalSpawn;
     }
   });
 
   it('should construct correct CLI args for resume session', async () => {
-    const mockSpawn = mock((args: string[], options: any) => {
+    const stdinMock = createMockStdin();
+    const mockSpawn = mock((args: string[], options: unknown) => {
       if (args[0] === 'which' || args[0] === 'where.exe') {
         return {
           stdout: {
@@ -92,6 +113,7 @@ describe('CodexAdapter', () => {
       }
 
       return {
+        stdin: stdinMock,
         stdout: {
           [Symbol.asyncIterator]: async function* () {
             yield new TextEncoder().encode(JSON.stringify({ output: 'resumed response' }));
@@ -122,14 +144,17 @@ describe('CodexAdapter', () => {
       expect(args).toContain('exec');
       expect(args).toContain('resume');
       expect(args).toContain('existing-session');
-      expect(args).toContain('follow up');
+      // Prompt piped via stdin, not in args
+      expect(args).not.toContain('follow up');
+      expect(stdinMock.getWritten()).toBe('follow up');
     } finally {
       (Bun as any).spawn = originalSpawn;
     }
   });
 
   it('should use working directory when provided', async () => {
-    const mockSpawn = mock((args: string[], options: any) => {
+    const stdinMock = createMockStdin();
+    const mockSpawn = mock((args: string[], options: unknown) => {
       if (args[0] === 'which' || args[0] === 'where.exe') {
         return {
           stdout: {
@@ -145,6 +170,7 @@ describe('CodexAdapter', () => {
       }
 
       return {
+        stdin: stdinMock,
         stdout: {
           [Symbol.asyncIterator]: async function* () {
             yield new TextEncoder().encode(JSON.stringify({ output: 'response' }));
@@ -171,14 +197,15 @@ describe('CodexAdapter', () => {
       const [, options] = mockSpawn.mock.calls.findLast((call: any[]) =>
         Array.isArray(call[0]) && call[0].includes('exec')
       ) ?? [[], {}];
-      expect(options.cwd).toBe('/custom/path');
+      expect((options as Record<string, unknown>).cwd).toBe('/custom/path');
     } finally {
       (Bun as any).spawn = originalSpawn;
     }
   });
 
   it('should parse JSON output and extract response', async () => {
-    const mockSpawn = mock((args: string[], options: any) => {
+    const stdinMock = createMockStdin();
+    const mockSpawn = mock((args: string[], options: unknown) => {
       if (args[0] === 'which' || args[0] === 'where.exe') {
         return {
           stdout: {
@@ -194,6 +221,7 @@ describe('CodexAdapter', () => {
       }
 
       return {
+        stdin: stdinMock,
         stdout: {
           [Symbol.asyncIterator]: async function* () {
             yield new TextEncoder().encode(JSON.stringify({ output: 'parsed response' }));
@@ -224,7 +252,9 @@ describe('CodexAdapter', () => {
 
   it('should prefer CODEX_BIN when set', async () => {
     process.env.CODEX_BIN = '/custom/codex';
-    const mockSpawn = mock((args: string[], options: any) => ({
+    const stdinMock = createMockStdin();
+    const mockSpawn = mock((args: string[], options: unknown) => ({
+      stdin: stdinMock,
       stdout: {
         [Symbol.asyncIterator]: async function* () {
           yield new TextEncoder().encode(JSON.stringify({ output: 'env response' }));
@@ -257,7 +287,8 @@ describe('CodexAdapter', () => {
   });
 
   it('should extract auto-generated session ID from response', async () => {
-    const mockSpawn = mock((args: string[], options: any) => {
+    const stdinMock = createMockStdin();
+    const mockSpawn = mock((args: string[], options: unknown) => {
       if (args[0] === 'which' || args[0] === 'where.exe') {
         return {
           stdout: {
@@ -273,6 +304,7 @@ describe('CodexAdapter', () => {
       }
 
       return {
+        stdin: stdinMock,
         stdout: {
           [Symbol.asyncIterator]: async function* () {
             yield new TextEncoder().encode(JSON.stringify({ 
@@ -305,7 +337,8 @@ describe('CodexAdapter', () => {
   });
 
   it('should handle session_id with underscore', async () => {
-    const mockSpawn = mock((args: string[], options: any) => {
+    const stdinMock = createMockStdin();
+    const mockSpawn = mock((args: string[], options: unknown) => {
       if (args[0] === 'which' || args[0] === 'where.exe') {
         return {
           stdout: {
@@ -321,6 +354,7 @@ describe('CodexAdapter', () => {
       }
 
       return {
+        stdin: stdinMock,
         stdout: {
           [Symbol.asyncIterator]: async function* () {
             yield new TextEncoder().encode(JSON.stringify({ 
@@ -353,7 +387,8 @@ describe('CodexAdapter', () => {
   });
 
   it('should handle non-JSON output', async () => {
-    const mockSpawn = mock((args: string[], options: any) => {
+    const stdinMock = createMockStdin();
+    const mockSpawn = mock((args: string[], options: unknown) => {
       if (args[0] === 'which' || args[0] === 'where.exe') {
         return {
           stdout: {
@@ -369,6 +404,7 @@ describe('CodexAdapter', () => {
       }
 
       return {
+        stdin: stdinMock,
         stdout: {
           [Symbol.asyncIterator]: async function* () {
             yield new TextEncoder().encode('plain text response');
@@ -398,7 +434,8 @@ describe('CodexAdapter', () => {
   });
 
   it('should throw error on non-zero exit code', async () => {
-    const mockSpawn = mock((args: string[], options: any) => {
+    const stdinMock = createMockStdin();
+    const mockSpawn = mock((args: string[], options: unknown) => {
       if (args[0] === 'which' || args[0] === 'where.exe') {
         return {
           stdout: {
@@ -414,6 +451,7 @@ describe('CodexAdapter', () => {
       }
 
       return {
+        stdin: stdinMock,
         stdout: {
           [Symbol.asyncIterator]: async function* () {},
         },
@@ -476,7 +514,8 @@ describe('CodexAdapter', () => {
   });
 
   it('should provide helpful diagnostics when async spawn fails (proc.exited rejection)', async () => {
-    const mockSpawn = mock((args: string[], options: any) => {
+    const stdinMock = createMockStdin();
+    const mockSpawn = mock((args: string[], options: unknown) => {
       if (args[0] === 'which' || args[0] === 'where.exe') {
         return {
           stdout: {
@@ -495,6 +534,7 @@ describe('CodexAdapter', () => {
       const err = new Error('ENOENT: no such file or directory');
       (err as any).code = 'ENOENT';
       return {
+        stdin: stdinMock,
         stdout: {
           [Symbol.asyncIterator]: async function* () {},
         },
@@ -525,5 +565,67 @@ describe('CodexAdapter', () => {
     const message = (caught as Error).message;
     expect(message).toContain('Codex CLI failed to start');
     expect(message).toContain('ENOENT');
+  });
+
+  it('should pipe multi-line prompt with XML tags via stdin', async () => {
+    const stdinMock = createMockStdin();
+    const xmlPrompt = `<channel_context source="discord" trust="untrusted">
+Recent channel context:
+user: hello
+bot: Processing...
+</channel_context>
+
+what's your local system time?`;
+
+    const mockSpawn = mock((args: string[], options: unknown) => {
+      if (args[0] === 'which' || args[0] === 'where.exe') {
+        return {
+          stdout: {
+            [Symbol.asyncIterator]: async function* () {
+              yield new TextEncoder().encode(REAL_BIN_PATH + '\n');
+            },
+          },
+          stderr: {
+            [Symbol.asyncIterator]: async function* () {},
+          },
+          exited: Promise.resolve(0),
+        };
+      }
+
+      return {
+        stdin: stdinMock,
+        stdout: {
+          [Symbol.asyncIterator]: async function* () {
+            yield new TextEncoder().encode(JSON.stringify({ output: 'The time is 3:00 PM' }));
+          },
+        },
+        stderr: {
+          [Symbol.asyncIterator]: async function* () {},
+        },
+        exited: Promise.resolve(0),
+      };
+    });
+
+    const originalSpawn = Bun.spawn;
+    (Bun as any).spawn = mockSpawn;
+
+    try {
+      const result = await adapter.spawn({
+        prompt: xmlPrompt,
+        sessionId: 'sess',
+        resume: false,
+      });
+
+      // Prompt should be sent via stdin, not in args
+      const [args] = mockSpawn.mock.calls.findLast((call: any[]) =>
+        Array.isArray(call[0]) && call[0].includes('exec')
+      ) ?? [[]];
+      expect(args).not.toContain(xmlPrompt);
+      expect(stdinMock.getWritten()).toBe(xmlPrompt);
+
+      expect(result.output).toBe('The time is 3:00 PM');
+    } finally {
+      (Bun as any).spawn = originalSpawn;
+    }
   });
 });

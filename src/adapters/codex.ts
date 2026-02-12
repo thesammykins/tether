@@ -10,9 +10,12 @@ import { debugLog, debugBlock } from '../debug.js';
  * Wraps the Codex CLI with session handling and JSON output parsing.
  * 
  * Key commands:
- * - `codex exec "<prompt>"`: Execute a new prompt
- * - `codex exec resume <sessionId> "<prompt>"`: Resume existing session
+ * - `codex exec`: Execute a new prompt (reads from stdin)
+ * - `codex exec resume <sessionId>`: Resume existing session
  * - `--json`: Structured output
+ * 
+ * The prompt is piped via stdin to handle multi-line content with
+ * XML tags and special characters safely.
  */
 
 // Cache resolved binary path
@@ -106,17 +109,15 @@ export class CodexAdapter implements AgentAdapter {
 
     // Session handling
     if (resume) {
-      // Resume existing session
       args.push('resume', sessionId);
     }
 
     // JSON output format
     args.push('--json');
 
-    // The prompt (always last)
-    args.push(prompt);
+    // Prompt is piped via stdin to avoid shell escaping issues with
+    // multi-line prompts containing XML tags, angle brackets, etc.
 
-    // Spawn the process
     const cwd = workingDir || process.cwd();
 
     debugBlock('codex', 'Spawn', {
@@ -124,6 +125,7 @@ export class CodexAdapter implements AgentAdapter {
       args: args.join(' '),
       cwd,
       resume: String(resume),
+      promptLength: String(prompt.length),
     });
 
     let proc: ReturnType<typeof Bun.spawn>;
@@ -131,6 +133,7 @@ export class CodexAdapter implements AgentAdapter {
       proc = Bun.spawn(args, {
         cwd,
         env: process.env,
+        stdin: 'pipe',
         stdout: 'pipe',
         stderr: 'pipe',
       });
@@ -144,6 +147,19 @@ export class CodexAdapter implements AgentAdapter {
         args,
         error,
       });
+    }
+
+    // Write prompt to stdin then close the stream.
+    // Bun.spawn with stdin:'pipe' returns a FileSink.
+    const stdin = proc.stdin;
+    if (!stdin || typeof stdin === 'number') {
+      throw new Error('Failed to get writable stdin from Codex process');
+    }
+    try {
+      stdin.write(prompt);
+      stdin.end();
+    } catch (error) {
+      throw new Error(`Failed to write prompt to Codex stdin: ${error}`);
     }
 
     // Collect output and handle async spawn failures
