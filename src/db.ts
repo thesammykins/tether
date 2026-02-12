@@ -198,10 +198,14 @@ export function getChannelProject(channelId: string): Project | null {
 }
 
 export function setChannelProject(channelId: string, projectName: string): void {
+    // Look up project path to keep working_dir in sync for legacy code paths
+    const project = db.query('SELECT path FROM projects WHERE name = ?')
+        .get(projectName) as { path: string } | null;
+    const workingDir = project?.path ?? null;
     db.run(`
-        INSERT INTO channels (channel_id, project_name) VALUES (?, ?)
-        ON CONFLICT(channel_id) DO UPDATE SET project_name = ?, updated_at = CURRENT_TIMESTAMP
-    `, [channelId, projectName, projectName]);
+        INSERT INTO channels (channel_id, project_name, working_dir) VALUES (?, ?, ?)
+        ON CONFLICT(channel_id) DO UPDATE SET project_name = ?, working_dir = COALESCE(?, working_dir), updated_at = CURRENT_TIMESTAMP
+    `, [channelId, projectName, workingDir, projectName, workingDir]);
 }
 
 export function getThreadProject(threadId: string): Project | null {

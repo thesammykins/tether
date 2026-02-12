@@ -7,6 +7,8 @@
 
 import { Client, TextChannel, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } from 'discord.js';
 import { timingSafeEqual, createHmac } from 'crypto';
+import { existsSync } from 'fs';
+import { resolve } from 'path';
 import {
     listProjects, createProject, deleteProject, setProjectDefault,
     getProject,
@@ -588,15 +590,32 @@ export function startApiServer(client: Client, port: number = 2643) {
                         });
                     }
 
-                    createProject(body.name, body.path, body.isDefault);
+                    // Validate path exists on disk
+                    const resolvedPath = resolve(body.path);
+                    if (!existsSync(resolvedPath)) {
+                        return new Response(JSON.stringify({ error: `Path does not exist: ${resolvedPath}` }), {
+                            status: 400,
+                            headers,
+                        });
+                    }
+
+                    createProject(body.name, resolvedPath, body.isDefault);
                     const project = getProject(body.name);
-                    log(`Project created: ${body.name} → ${body.path}`);
+                    log(`Project created: ${body.name} → ${resolvedPath}`);
                     return new Response(JSON.stringify({ success: true, project }), {
                         status: 201,
                         headers,
                     });
                 } catch (error) {
-                    log(`Create project error: ${error instanceof Error ? error.stack : String(error)}`);
+                    const message = error instanceof Error ? error.message : String(error);
+                    // Surface unique constraint violations as 409 Conflict
+                    if (message.includes('UNIQUE constraint')) {
+                        return new Response(JSON.stringify({ error: `Project already exists` }), {
+                            status: 409,
+                            headers,
+                        });
+                    }
+                    log(`Create project error: ${error instanceof Error ? error.stack : message}`);
                     return new Response(JSON.stringify({ error: 'Internal server error' }), {
                         status: 500,
                         headers,

@@ -154,15 +154,17 @@ export function handleProjectUse(channelId: string, name: string): CommandResult
  * Validate that a session ID exists in the threads table.
  * Returns the thread row if found, or null.
  */
-export function findSession(sessionId: string): { thread_id: string; session_id: string; working_dir: string | null } | null {
+export function findSession(sessionId: string): { thread_id: string; session_id: string; working_dir: string | null; project_name: string | null } | null {
     // Try exact match first
-    const exact = db.query('SELECT thread_id, session_id, working_dir FROM threads WHERE session_id = ?')
-        .get(sessionId) as { thread_id: string; session_id: string; working_dir: string | null } | null;
+    const exact = db.query('SELECT thread_id, session_id, working_dir, project_name FROM threads WHERE session_id = ?')
+        .get(sessionId) as { thread_id: string; session_id: string; working_dir: string | null; project_name: string | null } | null;
     if (exact) return exact;
 
     // Try prefix match (user may supply truncated ID)
-    const prefix = db.query('SELECT thread_id, session_id, working_dir FROM threads WHERE session_id LIKE ?')
-        .get(`${sessionId}%`) as { thread_id: string; session_id: string; working_dir: string | null } | null;
+    // Escape SQL LIKE wildcards in user input to prevent unintended matches
+    const escaped = sessionId.replace(/[%_]/g, '\\$&');
+    const prefix = db.query("SELECT thread_id, session_id, working_dir, project_name FROM threads WHERE session_id LIKE ? ESCAPE '\\'")
+        .get(`${escaped}%`) as { thread_id: string; session_id: string; working_dir: string | null; project_name: string | null } | null;
     return prefix;
 }
 
@@ -170,7 +172,7 @@ export function findSession(sessionId: string): { thread_id: string; session_id:
  * Handle session attach - validate the session exists and return info.
  * Thread creation happens in bot.ts since it needs Discord API.
  */
-export function handleSessionAttach(sessionId: string): CommandResult & { session?: { thread_id: string; session_id: string; working_dir: string | null } } {
+export function handleSessionAttach(sessionId: string): CommandResult & { session?: { thread_id: string; session_id: string; working_dir: string | null; project_name: string | null } } {
     const session = findSession(sessionId);
     if (!session) {
         return { success: false, message: `Session \`${sessionId}\` not found.` };

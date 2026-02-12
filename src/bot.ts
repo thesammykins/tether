@@ -407,23 +407,29 @@ client.once(Events.ClientReady, async (c) => {
 client.on(Events.InteractionCreate, async (interaction: Interaction) => {
     // ── Autocomplete handler ──────────────────────────────────────────────
     if (interaction.isAutocomplete() && interaction.commandName === 'cord') {
-        const focused = interaction.options.getFocused(true);
+        try {
+            const focused = interaction.options.getFocused(true);
 
-        if (focused.name === 'name') {
-            // Autocomplete project names
-            const projects = dbListProjects();
-            const filtered = projects
-                .filter(p => p.name.toLowerCase().includes(focused.value.toLowerCase()))
-                .slice(0, 25);
-            await interaction.respond(
-                filtered.map(p => ({ name: `${p.name} (${p.path})`, value: p.name })),
-            );
-        }
+            if (focused.name === 'name') {
+                // Autocomplete project names
+                const projects = dbListProjects();
+                const filtered = projects
+                    .filter(p => p.name.toLowerCase().includes(focused.value.toLowerCase()))
+                    .slice(0, 25);
+                await interaction.respond(
+                    filtered.map(p => ({ name: `${p.name} (${p.path})`, value: p.name })),
+                );
+            }
 
-        if (focused.name === 'session') {
-            // Autocomplete session IDs from threads table
-            const choices = getRecentSessions(focused.value);
-            await interaction.respond(choices);
+            if (focused.name === 'session') {
+                // Autocomplete session IDs from threads table
+                const choices = getRecentSessions(focused.value);
+                await interaction.respond(choices);
+            }
+        } catch (error) {
+            log(`Autocomplete error: ${error}`);
+            // Respond with empty list to prevent Discord "interaction failed" error
+            await interaction.respond([]).catch(() => {});
         }
 
         return;
@@ -519,12 +525,12 @@ client.on(Events.InteractionCreate, async (interaction: Interaction) => {
             // Create a new thread for the attached session
             try {
                 const channel = interaction.channel;
-                if (!channel || !('send' in channel)) {
-                    await interaction.reply({ content: 'Cannot create thread in this channel.', ephemeral: true });
+                if (!channel || channel.type !== ChannelType.GuildText) {
+                    await interaction.reply({ content: 'Session attach requires a text channel.', ephemeral: true });
                     return;
                 }
 
-                const statusMessage = await (channel as TextChannel).send(
+                const statusMessage = await channel.send(
                     `Attaching to session \`${result.session.session_id.slice(0, 8)}...\``,
                 );
                 const thread = await statusMessage.startThread({
@@ -532,11 +538,11 @@ client.on(Events.InteractionCreate, async (interaction: Interaction) => {
                     autoArchiveDuration: ThreadAutoArchiveDuration.OneDay,
                 });
 
-                // Store the new thread → existing session mapping
+                // Store the new thread → existing session mapping, preserving project context
                 const workingDir = result.session.working_dir || getDefaultWorkingDir();
                 db.run(
-                    'INSERT INTO threads (thread_id, session_id, working_dir) VALUES (?, ?, ?)',
-                    [thread.id, result.session.session_id, workingDir],
+                    'INSERT INTO threads (thread_id, session_id, working_dir, project_name) VALUES (?, ?, ?, ?)',
+                    [thread.id, result.session.session_id, workingDir, result.session.project_name],
                 );
 
                 await interaction.reply({
