@@ -822,6 +822,9 @@ async function start() {
         process.exit(1);
     }
 
+    // Parse debug flag
+    const debugMode = args.includes('--debug') || args.includes('--verbose');
+
     console.log('Starting Tether...\n');
 
     // Resolve script paths relative to the package root, not process.cwd().
@@ -850,6 +853,32 @@ async function start() {
             console.error('Wrong password or corrupted secrets file.');
             process.exit(1);
         }
+    }
+
+    // Enable debug mode in child processes
+    if (debugMode) {
+        childEnv.TETHER_DEBUG = 'true';
+    }
+
+    // Print startup summary in debug mode
+    if (debugMode) {
+        console.log('\n🔍 Debug mode enabled\n');
+        console.log('Startup Summary:');
+        console.log(`  Agent type:     ${childEnv.AGENT_TYPE || 'claude (default)'}`);
+        console.log(`  Bot script:     ${botScript}`);
+        console.log(`  Worker script:  ${workerScript}`);
+        console.log(`  Working dir:    ${childEnv.CLAUDE_WORKING_DIR || process.cwd()}`);
+        console.log(`  Redis:          ${childEnv.REDIS_HOST || 'localhost'}:${childEnv.REDIS_PORT || '6379'}`);
+        console.log(`  API bind:       ${childEnv.TETHER_API_HOST || '127.0.0.1'}:${childEnv.TETHER_API_PORT || '2643'}`);
+        // Show binary override if set
+        const binOverrides = ['CLAUDE_BIN', 'OPENCODE_BIN', 'CODEX_BIN'].filter(k => childEnv[k]);
+        if (binOverrides.length) {
+            for (const k of binOverrides) {
+                console.log(`  ${k}:  ${childEnv[k]}`);
+            }
+        }
+        console.log(`  PATH (first 3): ${(process.env.PATH || '').split(':').slice(0, 3).join(':')}`);
+        console.log('');
     }
 
     // Start bot
@@ -1232,6 +1261,8 @@ Usage: tether <command> [options]
 
 Management Commands:
   start              Start bot and worker
+      --debug        Enable debug logging (alias: --verbose)
+      --verbose      Enable debug logging (alias: --debug)
   stop               Stop all processes
   status             Show running status
   health             Check Distether connection

@@ -2,6 +2,7 @@ import type { AgentAdapter, SpawnOptions, SpawnResult } from './types.js';
 import type { BinarySource } from './resolve-binary.js';
 import { getHomeCandidate, getSystemBinaryCandidates, resolveBinary, resolveNpmGlobalBinary, normalizeBinarySource } from './resolve-binary.js';
 import { formatSpawnError } from './spawn-diagnostics.js';
+import { debugLog, debugBlock } from '../debug.js';
 
 /**
  * OpenCode CLI Adapter
@@ -33,11 +34,21 @@ export class OpenCodeAdapter implements AgentAdapter {
         console.log(`[opencode] Binary resolved (env): ${envValue}`);
       }
       this.binarySource = cachedBinarySource;
+      debugBlock('opencode', 'Binary Resolution', {
+        source: cachedBinarySource,
+        path: cachedBinaryPath,
+        envOverride: process.env.OPENCODE_BIN || 'none',
+      });
       return cachedBinaryPath;
     }
 
     if (cachedBinaryPath) {
       this.binarySource = cachedBinarySource;
+      debugBlock('opencode', 'Binary Resolution', {
+        source: cachedBinarySource,
+        path: cachedBinaryPath,
+        envOverride: 'none',
+      });
       return cachedBinaryPath;
     }
 
@@ -55,6 +66,11 @@ export class OpenCodeAdapter implements AgentAdapter {
       cachedBinarySource = normalizeBinarySource(resolved.source);
       this.binarySource = cachedBinarySource;
       console.log(`[opencode] Binary resolved (${resolved.source}): ${resolved.path}`);
+      debugBlock('opencode', 'Binary Resolution', {
+        source: cachedBinarySource,
+        path: cachedBinaryPath,
+        envOverride: 'none',
+      });
       return cachedBinaryPath;
     }
 
@@ -64,6 +80,11 @@ export class OpenCodeAdapter implements AgentAdapter {
       cachedBinarySource = 'npm';
       this.binarySource = cachedBinarySource;
       console.log(`[opencode] Binary resolved (npm): ${npmBinary}`);
+      debugBlock('opencode', 'Binary Resolution', {
+        source: cachedBinarySource,
+        path: cachedBinaryPath,
+        envOverride: 'none',
+      });
       return cachedBinaryPath;
     }
 
@@ -97,6 +118,14 @@ export class OpenCodeAdapter implements AgentAdapter {
 
     // Spawn the process
     const cwd = workingDir || process.cwd();
+
+    debugBlock('opencode', 'Spawn', {
+      binary: binaryPath,
+      args: args.join(' '),
+      cwd,
+      resume: String(resume),
+    });
+
     let proc: ReturnType<typeof Bun.spawn>;
     try {
       proc = Bun.spawn(args, {
@@ -117,12 +146,27 @@ export class OpenCodeAdapter implements AgentAdapter {
       });
     }
 
-    // Collect output
-    const stdout = await new Response(proc.stdout as ReadableStream<Uint8Array>).text();
-    const stderr = await new Response(proc.stderr as ReadableStream<Uint8Array>).text();
+    // Collect output and handle async spawn failures
+    let stdout: string;
+    let stderr: string;
+    let exitCode: number;
+    try {
+      stdout = await new Response(proc.stdout as ReadableStream<Uint8Array>).text();
+      stderr = await new Response(proc.stderr as ReadableStream<Uint8Array>).text();
+      exitCode = await proc.exited;
+    } catch (error) {
+      throw formatSpawnError({
+        adapterName: 'OpenCode',
+        binaryPath,
+        binarySource: this.binarySource,
+        envVar: 'OPENCODE_BIN',
+        workingDir: cwd,
+        args,
+        error,
+      });
+    }
 
-    // Wait for process to exit
-    const exitCode = await proc.exited;
+    debugLog('opencode', `Exit code: ${exitCode}`);
 
     if (exitCode !== 0) {
       throw new Error(`OpenCode CLI failed (exit ${exitCode}): ${stderr || 'Unknown error'}`);

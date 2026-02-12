@@ -14,6 +14,7 @@ import { sendToThread } from './discord.js';
 import { isAway } from './features/brb.js';
 import { updateSessionId } from './db.js';
 import type { ClaudeJob } from './queue.js';
+import { debugLog, debugBlock } from './debug.js';
 
 const log = (msg: string) => process.stdout.write(`[worker] ${msg}\n`);
 
@@ -31,10 +32,25 @@ const worker = new Worker<ClaudeJob>(
         log(`Processing job ${job.id} for ${username}`);
         log(`Session: ${sessionId}, Resume: ${resume}`);
 
+        // Debug: Log full job details
+        debugBlock('worker', 'Job Received', {
+            jobId: job.id ?? 'unknown',
+            threadId,
+            sessionId,
+            resume: String(resume),
+            username,
+            workingDir: workingDir || 'default',
+            hasChannelContext: String(!!channelContext),
+            promptLength: String(prompt.length),
+        });
+
         try {
             // Get the configured adapter and spawn
             const adapter = getAdapter();
             log(`Using adapter: ${adapter.name}`);
+
+            // Debug: Log adapter selection
+            debugLog('worker', `Adapter: ${adapter.name}`);
 
             // Prepend channel context if provided (new conversations only)
             let effectivePrompt = prompt;
@@ -74,11 +90,28 @@ const worker = new Worker<ClaudeJob>(
                 log(`BRB mode active for thread ${threadId} — injected tether ask guidance`);
             }
 
+            // Debug: Log spawn options before execution
+            debugBlock('worker', 'Spawn Options', {
+                adapter: adapter.name,
+                sessionId,
+                resume: String(resume),
+                workingDir: workingDir || process.cwd(),
+                effectivePromptLength: String(effectivePrompt.length),
+                brbActive: String(isAway(threadId)),
+            });
+
             const result = await adapter.spawn({
                 prompt: effectivePrompt,
                 sessionId,
                 resume,
                 workingDir,
+            });
+
+            // Debug: Log spawn result
+            debugBlock('worker', 'Spawn Result', {
+                outputLength: String(result.output.length),
+                returnedSessionId: result.sessionId || 'none',
+                sessionChanged: String(result.sessionId !== sessionId),
             });
 
             // Persist session ID if adapter returned one and it differs from current
@@ -99,6 +132,13 @@ const worker = new Worker<ClaudeJob>(
 
         } catch (error) {
             log(`Job ${job.id} failed: ${error}`);
+
+            // Debug: Log error details
+            debugBlock('worker', 'Job Failed', {
+                jobId: job.id ?? 'unknown',
+                error: String(error),
+                threadId,
+            });
 
             // Send error message to thread
             const errorResult = await sendToThread(
@@ -140,5 +180,14 @@ process.on('SIGINT', async () => {
 });
 
 log('Worker started, waiting for jobs...');
+
+// Debug: Log worker environment at startup
+debugBlock('worker', 'Worker Environment', {
+    agentType: process.env.AGENT_TYPE || 'claude (default)',
+    redisHost: process.env.REDIS_HOST || 'localhost',
+    redisPort: process.env.REDIS_PORT || '6379',
+    workingDir: process.env.CLAUDE_WORKING_DIR || process.cwd(),
+    tetherDebug: process.env.TETHER_DEBUG || 'false',
+});
 
 export { worker };

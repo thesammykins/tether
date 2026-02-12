@@ -16,10 +16,17 @@ Start the Discord bot and job worker as child processes.
 tether start
 ```
 
+| Option | Description |
+|--------|-------------|
+| `--debug` | Enable verbose debug logging for binary resolution, spawn args, env state, and worker pipeline |
+| `--verbose` | Alias for `--debug` |
+
+Debug mode prints a startup summary (agent type, resolved scripts, working directory, Redis, API bind, PATH) and sets `TETHER_DEBUG=true` for the bot and worker child processes. Adapter binary resolution, spawn diagnostics, and worker job processing all emit detailed debug output.
+
 Blocks the terminal — both bot and worker run until you stop them. To run in the background:
 
 ```bash
-nohup bun run bin/tether.ts start > /tmp/tether.log 2>&1 &
+nohup bun run bin/tether.ts start --debug > /tmp/tether.log 2>&1 &
 ```
 
 ### `tether stop`

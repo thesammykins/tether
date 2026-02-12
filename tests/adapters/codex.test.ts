@@ -470,4 +470,56 @@ describe('CodexAdapter', () => {
       (Bun as any).spawn = originalSpawn;
     }
   });
+
+  it('should provide helpful diagnostics when async spawn fails (proc.exited rejection)', async () => {
+    const mockSpawn = mock((args: string[], options: any) => {
+      if (args[0] === 'which' || args[0] === 'where.exe') {
+        return {
+          stdout: {
+            [Symbol.asyncIterator]: async function* () {
+              yield new TextEncoder().encode('/usr/local/bin/codex\n');
+            },
+          },
+          stderr: {
+            [Symbol.asyncIterator]: async function* () {},
+          },
+          exited: Promise.resolve(0),
+        };
+      }
+
+      // Simulate async rejection from proc.exited (e.g., ENOENT from shebang resolution)
+      const err = new Error('ENOENT: no such file or directory');
+      (err as any).code = 'ENOENT';
+      return {
+        stdout: {
+          [Symbol.asyncIterator]: async function* () {},
+        },
+        stderr: {
+          [Symbol.asyncIterator]: async function* () {},
+        },
+        exited: Promise.reject(err),
+      };
+    });
+
+    const originalSpawn = Bun.spawn;
+    (Bun as any).spawn = mockSpawn;
+
+    let caught: unknown;
+    try {
+      await adapter.spawn({
+        prompt: 'test',
+        sessionId: 'sess',
+        resume: false,
+      });
+    } catch (error) {
+      caught = error;
+    } finally {
+      (Bun as any).spawn = originalSpawn;
+    }
+
+    expect(caught).toBeInstanceOf(Error);
+    const message = (caught as Error).message;
+    expect(message).toContain('Codex CLI failed to start');
+    expect(message).toContain('ENOENT');
+  });
 });
