@@ -18,7 +18,7 @@ import { mkdirSync } from 'fs';
 import { dirname } from 'path';
 try {
     mkdirSync(dirname(DB_PATH), { recursive: true });
-} catch {}
+} catch { /* Directory already exists or permission issue */ }
 
 // Open database
 export const db = new Database(DB_PATH);
@@ -147,13 +147,15 @@ export interface Project {
 }
 
 export function createProject(name: string, path: string, isDefault?: boolean): void {
-    if (isDefault) {
-        db.run(`UPDATE projects SET is_default = 0 WHERE is_default = 1`);
-    }
-    db.run(`
-        INSERT INTO projects (name, path, is_default) VALUES (?, ?, ?)
-        ON CONFLICT(name) DO UPDATE SET path = ?, is_default = ?
-    `, [name, path, isDefault ? 1 : 0, path, isDefault ? 1 : 0]);
+    db.transaction(() => {
+        if (isDefault) {
+            db.run(`UPDATE projects SET is_default = 0 WHERE is_default = 1`);
+        }
+        db.run(`
+            INSERT INTO projects (name, path, is_default) VALUES (?, ?, ?)
+            ON CONFLICT(name) DO UPDATE SET path = ?, is_default = ?
+        `, [name, path, isDefault ? 1 : 0, path, isDefault ? 1 : 0]);
+    })();
 }
 
 export function getProject(name: string): Project | null {
@@ -172,14 +174,18 @@ export function listProjects(): Project[] {
 }
 
 export function deleteProject(name: string): void {
-    db.run(`UPDATE channels SET project_name = NULL WHERE project_name = ?`, [name]);
-    db.run(`UPDATE threads SET project_name = NULL WHERE project_name = ?`, [name]);
-    db.run(`DELETE FROM projects WHERE name = ?`, [name]);
+    db.transaction(() => {
+        db.run(`UPDATE channels SET project_name = NULL WHERE project_name = ?`, [name]);
+        db.run(`UPDATE threads SET project_name = NULL WHERE project_name = ?`, [name]);
+        db.run(`DELETE FROM projects WHERE name = ?`, [name]);
+    })();
 }
 
 export function setProjectDefault(name: string): void {
-    db.run(`UPDATE projects SET is_default = 0 WHERE is_default = 1`);
-    db.run(`UPDATE projects SET is_default = 1 WHERE name = ?`, [name]);
+    db.transaction(() => {
+        db.run(`UPDATE projects SET is_default = 0 WHERE is_default = 1`);
+        db.run(`UPDATE projects SET is_default = 1 WHERE name = ?`, [name]);
+    })();
 }
 
 export function getChannelProject(channelId: string): Project | null {

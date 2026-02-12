@@ -605,8 +605,7 @@ client.on(Events.InteractionCreate, async (interaction: Interaction) => {
             });
         } else         if (handler.type === 'webhook') {
             await interaction.deferReply({ ephemeral: true });
-            // Support both webhookUrl (preferred) and url (legacy) for backwards compatibility
-            const webhookUrl = (handler as any).webhookUrl || (handler as any).url;
+            const webhookUrl = handler.url;
             if (!webhookUrl) {
                 throw new Error('Webhook handler missing URL');
             }

@@ -413,20 +413,24 @@ export const CONFIG_PATHS = {
  */
 export function migrateWorkingDirToProject(): void {
     // Lazy-import to avoid circular dependency at module load time
-    const { listProjects, createProject } = require('./db.js');
+    const { listProjects, createProject, db } = require('./db.js');
     const { resolve: resolvePath, basename } = require('path');
 
     const workingDir = resolve('CLAUDE_WORKING_DIR');
     if (!workingDir) return;
 
-    const existing = listProjects() as { name: string }[];
-    if (existing.length > 0) {
-        console.log('[config] CLAUDE_WORKING_DIR is deprecated. Use named projects instead (tether project add).');
-        return;
-    }
+    // Use a transaction to prevent TOCTOU race: concurrent calls could both
+    // see 0 projects and create duplicates without atomic check-and-insert.
+    db.transaction(() => {
+        const existing = listProjects() as { name: string }[];
+        if (existing.length > 0) {
+            console.log('[config] CLAUDE_WORKING_DIR is deprecated. Use named projects instead (tether project add).');
+            return;
+        }
 
-    const resolvedPath = resolvePath(workingDir);
-    const dirName = basename(resolvedPath);
-    createProject(dirName, resolvedPath, true);
-    console.log(`[config] Migrated CLAUDE_WORKING_DIR to project "${dirName}"`);
+        const resolvedPath = resolvePath(workingDir);
+        const dirName = basename(resolvedPath);
+        createProject(dirName, resolvedPath, true);
+        console.log(`[config] Migrated CLAUDE_WORKING_DIR to project "${dirName}"`);
+    })();
 }
