@@ -88,13 +88,67 @@ tether config list
 | `REDIS_HOST` | `localhost` | Redis host |
 | `REDIS_PORT` | `6379` | Redis port |
 
-### Security
+### Security & Access Control
+
+Tether supports restricting who can interact with the bot using allowlists. If none are configured, the bot responds to all users.
+
+#### User Allowlist
+
+Restrict the bot to only respond to specific Discord users:
+
+```bash
+# Set allowed users (comma-separated Discord user IDs)
+tether config set ALLOWED_USERS 123456789012345678,987654321098765432
+```
+
+**How to find your Discord user ID:**
+
+1. Enable **Developer Mode** in Discord: Settings → App Settings → Advanced → Developer Mode
+2. Right-click on your username (or any user) → **Copy ID**
+
+When `ALLOWED_USERS` is set, only users in the list can interact with the bot. This works in both guild channels and DMs.
+
+#### Role and Channel Allowlists
+
+For guild (server) deployments, you can also restrict by role or channel:
+
+```bash
+# Only allow users with specific roles (comma-separated role IDs)
+tether config set ALLOWED_ROLES 111111111111111111,222222222222222222
+
+# Only allow bot usage in specific channels (comma-separated channel IDs)
+tether config set ALLOWED_CHANNELS 333333333333333333,444444444444444444
+```
+
+**How these work together:**
+- If `ALLOWED_CHANNELS` is set, messages must be in an allowed channel (or its threads)
+- If `ALLOWED_USERS` or `ALLOWED_ROLES` is set, the user must match at least one:
+  - Be in the `ALLOWED_USERS` list, OR
+  - Have a role in the `ALLOWED_ROLES` list
+- Role and channel allowlists only apply in guilds (not DMs)
+- If no allowlists are configured, the bot responds to everyone
+
+**Examples:**
+
+```bash
+# Only respond to yourself
+tether config set ALLOWED_USERS 123456789012345678
+
+# Only respond in a specific channel
+tether config set ALLOWED_CHANNELS 987654321098765432
+
+# Only respond to admins (role ID)
+tether config set ALLOWED_ROLES 555555555555555555
+
+# Combine: only respond to specific users in specific channels
+tether config set ALLOWED_USERS 123456789012345678
+tether config set ALLOWED_CHANNELS 987654321098765432
+```
+
+#### Directory Allowlist
 
 | Key | Default | Description |
 |-----|---------|-------------|
-| `ALLOWED_USERS` | (empty = all) | Comma-separated Discord user IDs |
-| `ALLOWED_ROLES` | (empty = all) | Comma-separated Discord role IDs (guild only) |
-| `ALLOWED_CHANNELS` | (empty = all) | Comma-separated Discord channel IDs (guild only) |
 | `CORD_ALLOWED_DIRS` | (empty = any) | Comma-separated allowed working directories |
 
 ### Limits
@@ -165,7 +219,4 @@ Paths outside the allowlist are rejected. If unset, any existing directory is al
 
 ## Finding Discord IDs
 
-To get user, role, or channel IDs:
-
-1. Enable **Developer Mode** in Discord: Settings → App Settings → Advanced → Developer Mode
-2. Right-click a user, role, or channel → **Copy ID**
+See the [Security & Access Control](#security--access-control) section above for instructions on finding user, role, and channel IDs.
