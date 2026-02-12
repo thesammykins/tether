@@ -2,6 +2,7 @@ import type { AgentAdapter, SpawnOptions, SpawnResult } from './types.js';
 import type { BinarySource } from './resolve-binary.js';
 import { getHomeCandidate, getSystemBinaryCandidates, resolveBinary, resolveNpmGlobalBinary, normalizeBinarySource } from './resolve-binary.js';
 import { formatSpawnError } from './spawn-diagnostics.js';
+import { debugLog, debugBlock } from '../debug.js';
 
 /**
  * Codex CLI Adapter
@@ -32,11 +33,21 @@ export class CodexAdapter implements AgentAdapter {
         console.log(`[codex] Binary resolved (env): ${envValue}`);
       }
       this.binarySource = cachedBinarySource;
+      debugBlock('codex', 'Binary Resolution', {
+        source: cachedBinarySource,
+        path: cachedBinaryPath,
+        envOverride: process.env.CODEX_BIN || 'none',
+      });
       return cachedBinaryPath;
     }
 
     if (cachedBinaryPath) {
       this.binarySource = cachedBinarySource;
+      debugBlock('codex', 'Binary Resolution', {
+        source: cachedBinarySource,
+        path: cachedBinaryPath,
+        envOverride: 'none',
+      });
       return cachedBinaryPath;
     }
 
@@ -54,6 +65,11 @@ export class CodexAdapter implements AgentAdapter {
       cachedBinarySource = normalizeBinarySource(resolved.source);
       this.binarySource = cachedBinarySource;
       console.log(`[codex] Binary resolved (${resolved.source}): ${resolved.path}`);
+      debugBlock('codex', 'Binary Resolution', {
+        source: cachedBinarySource,
+        path: cachedBinaryPath,
+        envOverride: 'none',
+      });
       return cachedBinaryPath;
     }
 
@@ -63,6 +79,11 @@ export class CodexAdapter implements AgentAdapter {
       cachedBinarySource = 'npm';
       this.binarySource = cachedBinarySource;
       console.log(`[codex] Binary resolved (npm): ${npmBinary}`);
+      debugBlock('codex', 'Binary Resolution', {
+        source: cachedBinarySource,
+        path: cachedBinaryPath,
+        envOverride: 'none',
+      });
       return cachedBinaryPath;
     }
 
@@ -91,6 +112,14 @@ export class CodexAdapter implements AgentAdapter {
 
     // Spawn the process
     const cwd = workingDir || process.cwd();
+
+    debugBlock('codex', 'Spawn', {
+      binary: binaryPath,
+      args: args.join(' '),
+      cwd,
+      resume: String(resume),
+    });
+
     let proc: ReturnType<typeof Bun.spawn>;
     try {
       proc = Bun.spawn(args, {
@@ -111,12 +140,27 @@ export class CodexAdapter implements AgentAdapter {
       });
     }
 
-    // Collect output
-    const stdout = await new Response(proc.stdout as ReadableStream<Uint8Array>).text();
-    const stderr = await new Response(proc.stderr as ReadableStream<Uint8Array>).text();
+    // Collect output and handle async spawn failures
+    let stdout: string;
+    let stderr: string;
+    let exitCode: number;
+    try {
+      stdout = await new Response(proc.stdout as ReadableStream<Uint8Array>).text();
+      stderr = await new Response(proc.stderr as ReadableStream<Uint8Array>).text();
+      exitCode = await proc.exited;
+    } catch (error) {
+      throw formatSpawnError({
+        adapterName: 'Codex',
+        binaryPath,
+        binarySource: this.binarySource,
+        envVar: 'CODEX_BIN',
+        workingDir: cwd,
+        args,
+        error,
+      });
+    }
 
-    // Wait for process to exit
-    const exitCode = await proc.exited;
+    debugLog('codex', `Exit code: ${exitCode}`);
 
     if (exitCode !== 0) {
       throw new Error(`Codex CLI failed (exit ${exitCode}): ${stderr || 'Unknown error'}`);

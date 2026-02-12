@@ -2,6 +2,7 @@ import type { AgentAdapter, SpawnOptions, SpawnResult } from './types.js';
 import type { BinarySource } from './resolve-binary.js';
 import { getHomeCandidate, getSystemBinaryCandidates, resolveBinary, resolveNpmGlobalBinary, normalizeBinarySource } from './resolve-binary.js';
 import { formatSpawnError } from './spawn-diagnostics.js';
+import { debugLog, debugBlock } from '../debug.js';
 
 /**
  * Claude CLI Adapter
@@ -43,10 +44,20 @@ async function getClaudeBinaryPath(): Promise<{ path: string; source: BinarySour
       cachedBinarySource = 'env';
       console.log(`[claude] Binary resolved (env): ${envValue}`);
     }
+    debugBlock('claude', 'Binary Resolution', {
+      source: cachedBinarySource,
+      path: cachedBinaryPath,
+      envOverride: process.env.CLAUDE_BIN || 'none',
+    });
     return { path: cachedBinaryPath, source: cachedBinarySource };
   }
 
   if (cachedBinaryPath) {
+    debugBlock('claude', 'Binary Resolution', {
+      source: cachedBinarySource,
+      path: cachedBinaryPath,
+      envOverride: 'none',
+    });
     return { path: cachedBinaryPath, source: cachedBinarySource };
   }
 
@@ -67,6 +78,11 @@ async function getClaudeBinaryPath(): Promise<{ path: string; source: BinarySour
     cachedBinaryPath = resolved.path;
     console.log(`[claude] Binary resolved (${resolved.source}): ${resolved.path}`);
     cachedBinarySource = normalizeBinarySource(resolved.source);
+    debugBlock('claude', 'Binary Resolution', {
+      source: cachedBinarySource,
+      path: cachedBinaryPath,
+      envOverride: 'none',
+    });
     return { path: cachedBinaryPath, source: cachedBinarySource };
   }
 
@@ -75,6 +91,11 @@ async function getClaudeBinaryPath(): Promise<{ path: string; source: BinarySour
     cachedBinaryPath = npmBinary;
     console.log(`[claude] Binary resolved (npm): ${npmBinary}`);
     cachedBinarySource = 'npm';
+    debugBlock('claude', 'Binary Resolution', {
+      source: cachedBinarySource,
+      path: cachedBinaryPath,
+      envOverride: 'none',
+    });
     return { path: cachedBinaryPath, source: cachedBinarySource };
   }
 
@@ -91,6 +112,11 @@ async function getClaudeBinaryPath(): Promise<{ path: string; source: BinarySour
       cachedBinaryPath = 'npx';
       cachedBinarySource = 'npx';
       console.log('[claude] Binary not in PATH, will use: npx @anthropic-ai/claude-code');
+      debugBlock('claude', 'Binary Resolution', {
+        source: cachedBinarySource,
+        path: cachedBinaryPath,
+        envOverride: 'none',
+      });
       return { path: cachedBinaryPath, source: cachedBinarySource };
     }
   } catch {
@@ -171,6 +197,13 @@ export class ClaudeAdapter implements AgentAdapter {
 
     console.log('[claude] Spawning with args:', args);
     console.log('[claude] Working directory:', cwd);
+
+    debugBlock('claude', 'Spawn', {
+      binary: binary.path,
+      args: args.join(' '),
+      cwd,
+      resume: String(resume),
+    });
 
     // Spawn the process
     const result = await this.spawnProcess(args, cwd, sessionId, resume, binary);
@@ -262,12 +295,30 @@ export class ClaudeAdapter implements AgentAdapter {
       });
     }
 
-    // Collect output
-    let stdout = await new Response(proc.stdout as ReadableStream<Uint8Array>).text();
-    let stderr = await new Response(proc.stderr as ReadableStream<Uint8Array>).text();
+    // Collect output and handle async spawn failures
+    let stdout: string;
+    let stderr: string;
+    let exitCode: number;
+    try {
+      stdout = await new Response(proc.stdout as ReadableStream<Uint8Array>).text();
+      stderr = await new Response(proc.stderr as ReadableStream<Uint8Array>).text();
+      exitCode = await proc.exited;
+    } catch (error) {
+      throw formatSpawnError({
+        adapterName: 'Claude',
+        binaryPath: binary.path,
+        binarySource: binary.source,
+        envVar: 'CLAUDE_BIN',
+        workingDir: cwd,
+        args,
+        error,
+      });
+    }
 
-    // Wait for process to exit
-    let exitCode = await proc.exited;
+    debugLog('claude', `Exit code: ${exitCode}`);
+    if (stderr) {
+      debugLog('claude', `Stderr: ${stderr}`);
+    }
 
     console.log('[claude] Exit code:', exitCode);
     if (stderr) {
@@ -298,6 +349,12 @@ export class ClaudeAdapter implements AgentAdapter {
 
       console.log('[claude] Retrying with args:', continueArgs);
 
+      debugBlock('claude', 'Retry Spawn (--continue fallback)', {
+        binary: binary.path,
+        args: continueArgs.join(' '),
+        cwd,
+      });
+
       // Retry with --continue
       try {
         proc = Bun.spawn(continueArgs, {
@@ -321,9 +378,27 @@ export class ClaudeAdapter implements AgentAdapter {
         });
       }
 
-      stdout = await new Response(proc.stdout as ReadableStream<Uint8Array>).text();
-      stderr = await new Response(proc.stderr as ReadableStream<Uint8Array>).text();
-      exitCode = await proc.exited;
+      // Collect output and handle async spawn failures for retry
+      try {
+        stdout = await new Response(proc.stdout as ReadableStream<Uint8Array>).text();
+        stderr = await new Response(proc.stderr as ReadableStream<Uint8Array>).text();
+        exitCode = await proc.exited;
+      } catch (error) {
+        throw formatSpawnError({
+          adapterName: 'Claude',
+          binaryPath: binary.path,
+          binarySource: binary.source,
+          envVar: 'CLAUDE_BIN',
+          workingDir: cwd,
+          args: continueArgs,
+          error,
+        });
+      }
+
+      debugLog('claude', `Fallback exit code: ${exitCode}`);
+      if (stderr) {
+        debugLog('claude', `Fallback stderr: ${stderr}`);
+      }
 
       console.log('[claude] Fallback exit code:', exitCode);
       if (stderr) {

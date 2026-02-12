@@ -29,13 +29,15 @@ describe('ClaudeAdapter', () => {
   });
 
   it('should resolve binary path using which', async () => {
+    // Use a path that actually exists so existsSync validation passes
+    const mockClaudePath = join(process.cwd(), 'bin', 'tether.ts');
     const mockSpawn = mock((args: string[], options?: any) => {
       // which/where claude
       if ((args[0] === 'which' || args[0] === 'where.exe') && args[1] === 'claude') {
         return {
           stdout: {
             [Symbol.asyncIterator]: async function* () {
-              yield new TextEncoder().encode('/usr/local/bin/claude\n');
+              yield new TextEncoder().encode(`${mockClaudePath}\n`);
             },
           },
           stderr: {
@@ -86,13 +88,15 @@ describe('ClaudeAdapter', () => {
   });
 
   it('should warn about known buggy versions', async () => {
+    // Use a path that actually exists so existsSync validation passes
+    const mockClaudePath = join(process.cwd(), 'bin', 'tether.ts');
     const mockSpawn = mock((args: string[], options?: any) => {
       // which/where claude
       if ((args[0] === 'which' || args[0] === 'where.exe') && args[1] === 'claude') {
         return {
           stdout: {
             [Symbol.asyncIterator]: async function* () {
-              yield new TextEncoder().encode('/usr/local/bin/claude\n');
+              yield new TextEncoder().encode(`${mockClaudePath}\n`);
             },
           },
           stderr: {

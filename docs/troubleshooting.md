@@ -9,7 +9,7 @@
 | `DisallowedIntents` error | Enable the required intents in Developer Portal → Bot tab (see [Discord Setup](discord-setup.md#3-configure-privileged-intents)) |
 | Bot doesn't receive DMs | Set `ENABLE_DMS=true`: `tether config set ENABLE_DMS true` |
 | "Rate limit exceeded" | Adjust `RATE_LIMIT_REQUESTS` / `RATE_LIMIT_WINDOW_MS` (see [Configuration](configuration.md#limits)) |
-| Agent command not found | Ensure `claude`/`opencode`/`codex` is installed and on PATH. If running as a service, set `CLAUDE_BIN` / `OPENCODE_BIN` / `CODEX_BIN` to an absolute path (see [Agent Setup](agents.md)) |
+| Agent command not found | Ensure `claude`/`opencode`/`codex` is installed and on PATH. If running as a service, set `CLAUDE_BIN` / `OPENCODE_BIN` / `CODEX_BIN` to an absolute path (see [Agent Setup](agents.md)). Run `tether start --debug` for detailed binary resolution output |
 | Redis connection refused | Start Redis: `redis-server` (or `brew services start redis` on macOS) |
 | Bot can't create threads | Check bot has **Create Public Threads** permission in your server |
 | `tether start` hangs / does nothing | Check for a stale PID file: `rm -f .tether.pid` then try again |
@@ -26,6 +26,30 @@ tether health
 
 # What config is active?
 tether config list
+```
+
+## Debug Mode
+
+When troubleshooting agent spawn failures or PATH issues, start Tether in debug mode:
+
+```bash
+tether start --debug
+```
+
+This enables verbose logging across the entire pipeline:
+
+- **Startup summary** — Shows agent type, script paths, working directory, Redis/API config, binary overrides, and PATH
+- **Binary resolution** — Shows how each agent binary was found (env override, PATH lookup, candidate paths, npm global)
+- **`which` validation** — Detects stale PATH entries where `which` returns a path that no longer exists on disk
+- **Spawn diagnostics** — Shows the exact command, args, working directory, and exit code for each agent spawn
+- **Worker pipeline** — Shows job details, adapter selection, spawn options, and results for each queued job
+
+Debug output is prefixed with `[prefix:debug]` and tokens/secrets are automatically redacted.
+
+**Tip:** Pipe debug output to a file for easier analysis:
+
+```bash
+tether start --debug > /tmp/tether-debug.log 2>&1
 ```
 
 ## Logs

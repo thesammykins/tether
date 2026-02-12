@@ -1,6 +1,7 @@
 import { existsSync } from 'fs';
 import { homedir } from 'os';
 import { join } from 'path';
+import { debugLog, debugBlock } from '../debug.js';
 
 export type BinarySource = 'env' | 'path' | 'candidate' | 'npm';
 
@@ -25,6 +26,8 @@ export async function resolveBinary(
   const isWindows = process.platform === 'win32';
   const whichCommand = isWindows ? 'where.exe' : 'which';
 
+  debugLog('resolve-binary', `Resolving binary: ${options.name}`);
+
   try {
     const proc = Bun.spawn([whichCommand, options.name], {
       stdout: 'pipe',
@@ -34,25 +37,39 @@ export async function resolveBinary(
     const stdout = await new Response(proc.stdout).text();
     const exitCode = await proc.exited;
 
+    debugBlock('resolve-binary', `${whichCommand} result`, {
+      command: `${whichCommand} ${options.name}`,
+      exitCode: String(exitCode),
+      stdout: stdout.trim() || '(empty)',
+    });
+
     if (exitCode === 0 && stdout.trim()) {
       const firstPath = stdout.trim().split('\n')[0];
-      if (firstPath) {
+      if (firstPath && existsSync(firstPath)) {
+        debugLog('resolve-binary', `✓ Found via ${whichCommand}: ${firstPath}`);
         return { path: firstPath, source: 'path' };
       }
+      // which returned a path that doesn't exist (stale PATH entry)
+      debugLog('resolve-binary', `✗ ${whichCommand} returned non-existent path: ${firstPath}`);
     }
-  } catch {
+  } catch (error) {
+    debugLog('resolve-binary', `${whichCommand} failed: ${error}`);
     // Ignore and fall through to candidates
   }
 
   const candidates = isWindows ? options.windowsCandidates : options.candidates;
   if (candidates) {
+    debugLog('resolve-binary', `Checking ${candidates.length} candidate path(s)`);
     for (const candidate of candidates) {
       if (candidate && existsSync(candidate)) {
+        debugLog('resolve-binary', `✓ Found via candidate: ${candidate}`);
         return { path: candidate, source: 'candidate' };
       }
     }
+    debugLog('resolve-binary', '✗ No candidates found');
   }
 
+  debugLog('resolve-binary', `Binary not found: ${options.name}`);
   return null;
 }
 
