@@ -1,5 +1,7 @@
 import type { AgentAdapter, SpawnOptions, SpawnResult } from './types.js';
-import { getHomeCandidate, getSystemBinaryCandidates, resolveBinary, resolveNpmGlobalBinary } from './resolve-binary.js';
+import type { BinarySource } from './resolve-binary.js';
+import { getHomeCandidate, getSystemBinaryCandidates, resolveBinary, resolveNpmGlobalBinary, normalizeBinarySource } from './resolve-binary.js';
+import { formatSpawnError } from './spawn-diagnostics.js';
 
 /**
  * Claude CLI Adapter
@@ -26,24 +28,26 @@ const KNOWN_BUGGY_VERSIONS = ['1.0.67'];
 
 // Cache resolved binary path
 let cachedBinaryPath: string | null = null;
+let cachedBinarySource: BinarySource | 'npx' | 'unknown' = 'unknown';
 
 /**
  * Resolve the Claude CLI binary path.
  * Tries `which claude` (macOS/Linux) or `where.exe claude` (Windows),
  * then falls back to checking `npx @anthropic-ai/claude-code` availability.
  */
-async function getClaudeBinaryPath(): Promise<string> {
+async function getClaudeBinaryPath(): Promise<{ path: string; source: BinarySource | 'npx' | 'unknown' }> {
   const envValue = process.env.CLAUDE_BIN;
   if (envValue) {
     if (cachedBinaryPath !== envValue) {
       cachedBinaryPath = envValue;
+      cachedBinarySource = 'env';
       console.log(`[claude] Binary resolved (env): ${envValue}`);
     }
-    return cachedBinaryPath;
+    return { path: cachedBinaryPath, source: cachedBinarySource };
   }
 
   if (cachedBinaryPath) {
-    return cachedBinaryPath;
+    return { path: cachedBinaryPath, source: cachedBinarySource };
   }
 
   const resolved = await resolveBinary({
@@ -62,14 +66,16 @@ async function getClaudeBinaryPath(): Promise<string> {
   if (resolved) {
     cachedBinaryPath = resolved.path;
     console.log(`[claude] Binary resolved (${resolved.source}): ${resolved.path}`);
-    return cachedBinaryPath;
+    cachedBinarySource = normalizeBinarySource(resolved.source);
+    return { path: cachedBinaryPath, source: cachedBinarySource };
   }
 
   const npmBinary = await resolveNpmGlobalBinary('claude');
   if (npmBinary) {
     cachedBinaryPath = npmBinary;
     console.log(`[claude] Binary resolved (npm): ${npmBinary}`);
-    return cachedBinaryPath;
+    cachedBinarySource = 'npm';
+    return { path: cachedBinaryPath, source: cachedBinarySource };
   }
 
   // Try npx fallback
@@ -83,8 +89,9 @@ async function getClaudeBinaryPath(): Promise<string> {
 
     if (exitCode === 0) {
       cachedBinaryPath = 'npx';
+      cachedBinarySource = 'npx';
       console.log('[claude] Binary not in PATH, will use: npx @anthropic-ai/claude-code');
-      return cachedBinaryPath;
+      return { path: cachedBinaryPath, source: cachedBinarySource };
     }
   } catch {
     // Fall through to error
@@ -110,7 +117,7 @@ async function getClaudeVersion(binaryPath: string): Promise<string> {
       stderr: 'pipe',
     });
 
-    const stdout = await new Response(proc.stdout).text();
+    const stdout = await new Response(proc.stdout as ReadableStream<Uint8Array>).text();
     const exitCode = await proc.exited;
 
     if (exitCode === 0) {
@@ -156,17 +163,17 @@ export class ClaudeAdapter implements AgentAdapter {
     const cwd = workingDir || process.env.CLAUDE_WORKING_DIR || process.cwd();
 
     // Resolve binary path and get version
-    const binaryPath = await getClaudeBinaryPath();
-    await getClaudeVersion(binaryPath);
+    const binary = await getClaudeBinaryPath();
+    await getClaudeVersion(binary.path);
 
     // Build CLI arguments
-    const args = this.buildArgs(binaryPath, options);
+    const args = this.buildArgs(binary.path, options);
 
     console.log('[claude] Spawning with args:', args);
     console.log('[claude] Working directory:', cwd);
 
     // Spawn the process
-    const result = await this.spawnProcess(args, cwd, sessionId, resume);
+    const result = await this.spawnProcess(args, cwd, sessionId, resume, binary);
 
     return result;
   }
@@ -221,21 +228,35 @@ export class ClaudeAdapter implements AgentAdapter {
     args: string[],
     cwd: string,
     sessionId: string,
-    resume: boolean
+    resume: boolean,
+    binary: { path: string; source: BinarySource | 'npx' | 'unknown' }
   ): Promise<SpawnResult> {
-    let proc = Bun.spawn(args, {
-      cwd,
-      env: {
-        ...process.env,
-        TZ: TIMEZONE,
-      },
-      stdout: 'pipe',
-      stderr: 'pipe',
-    });
+    let proc: ReturnType<typeof Bun.spawn>;
+    try {
+      proc = Bun.spawn(args, {
+        cwd,
+        env: {
+          ...process.env,
+          TZ: TIMEZONE,
+        },
+        stdout: 'pipe',
+        stderr: 'pipe',
+      });
+    } catch (error) {
+      throw formatSpawnError({
+        adapterName: 'Claude',
+        binaryPath: binary.path,
+        binarySource: binary.source,
+        envVar: 'CLAUDE_BIN',
+        workingDir: cwd,
+        args,
+        error,
+      });
+    }
 
     // Collect output
-    let stdout = await new Response(proc.stdout).text();
-    let stderr = await new Response(proc.stderr).text();
+    let stdout = await new Response(proc.stdout as ReadableStream<Uint8Array>).text();
+    let stderr = await new Response(proc.stderr as ReadableStream<Uint8Array>).text();
 
     // Wait for process to exit
     let exitCode = await proc.exited;
@@ -270,18 +291,30 @@ export class ClaudeAdapter implements AgentAdapter {
       console.log('[claude] Retrying with args:', continueArgs);
 
       // Retry with --continue
-      proc = Bun.spawn(continueArgs, {
-        cwd,
-        env: {
-          ...process.env,
-          TZ: TIMEZONE,
-        },
-        stdout: 'pipe',
-        stderr: 'pipe',
-      });
+      try {
+        proc = Bun.spawn(continueArgs, {
+          cwd,
+          env: {
+            ...process.env,
+            TZ: TIMEZONE,
+          },
+          stdout: 'pipe',
+          stderr: 'pipe',
+        });
+      } catch (error) {
+        throw formatSpawnError({
+          adapterName: 'Claude',
+          binaryPath: binary.path,
+          binarySource: binary.source,
+          envVar: 'CLAUDE_BIN',
+          workingDir: cwd,
+          args: continueArgs,
+          error,
+        });
+      }
 
-      stdout = await new Response(proc.stdout).text();
-      stderr = await new Response(proc.stderr).text();
+      stdout = await new Response(proc.stdout as ReadableStream<Uint8Array>).text();
+      stderr = await new Response(proc.stderr as ReadableStream<Uint8Array>).text();
       exitCode = await proc.exited;
 
       console.log('[claude] Fallback exit code:', exitCode);

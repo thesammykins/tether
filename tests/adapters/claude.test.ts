@@ -1,4 +1,5 @@
 import { describe, it, expect, mock, beforeEach, afterEach } from 'bun:test';
+import { join } from 'path';
 import { ClaudeAdapter } from '../../src/adapters/claude.js';
 
 describe('ClaudeAdapter', () => {
@@ -493,5 +494,50 @@ describe('ClaudeAdapter', () => {
         resume: false,
       })
     ).rejects.toThrow('Claude CLI failed');
+  });
+
+  it('should provide helpful diagnostics when spawn fails', async () => {
+    process.env.CLAUDE_BIN = join(process.cwd(), 'tmp', 'missing-claude-binary');
+    const mockSpawn = mock((args: string[]) => {
+      if (args.includes('--version')) {
+        return {
+          stdout: {
+            [Symbol.asyncIterator]: async function* () {
+              yield new TextEncoder().encode('1.0.70\n');
+            },
+          },
+          stderr: {
+            [Symbol.asyncIterator]: async function* () {},
+          },
+          exited: Promise.resolve(0),
+        };
+      }
+
+      const err = new Error('ENOENT: no such file or directory, posix_spawn');
+      (err as any).code = 'ENOENT';
+      throw err;
+    });
+
+    const originalSpawn = Bun.spawn;
+    (Bun as any).spawn = mockSpawn;
+
+    let caught: unknown;
+    try {
+      await adapter.spawn({
+        prompt: 'test',
+        sessionId: 'sess',
+        resume: false,
+      });
+    } catch (error) {
+      caught = error;
+    } finally {
+      (Bun as any).spawn = originalSpawn;
+    }
+
+    expect(caught).toBeInstanceOf(Error);
+    const message = (caught as Error).message;
+    expect(message).toContain('Claude CLI failed to start');
+    expect(message).toContain('CLAUDE_BIN');
+    expect(message).toContain('Binary not found at the resolved path');
   });
 });

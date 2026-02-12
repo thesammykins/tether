@@ -1,4 +1,5 @@
 import { describe, it, expect, mock, beforeEach, afterEach } from 'bun:test';
+import { join } from 'path';
 import { CodexAdapter } from '../../src/adapters/codex.js';
 
 describe('CodexAdapter', () => {
@@ -432,6 +433,39 @@ describe('CodexAdapter', () => {
           resume: false,
         })
       ).rejects.toThrow('Codex CLI failed');
+    } finally {
+      (Bun as any).spawn = originalSpawn;
+    }
+  });
+
+  it('should provide helpful diagnostics when spawn fails', async () => {
+    process.env.CODEX_BIN = join(process.cwd(), 'tmp', 'missing-codex-binary');
+    const mockSpawn = mock(() => {
+      const err = new Error('ENOENT: no such file or directory, posix_spawn');
+      (err as any).code = 'ENOENT';
+      throw err;
+    });
+
+    const originalSpawn = Bun.spawn;
+    (Bun as any).spawn = mockSpawn;
+
+    try {
+      let caught: unknown;
+      try {
+        await adapter.spawn({
+          prompt: 'test',
+          sessionId: 'sess',
+          resume: false,
+        });
+      } catch (error) {
+        caught = error;
+      }
+
+      expect(caught).toBeInstanceOf(Error);
+      const message = (caught as Error).message;
+      expect(message).toContain('Codex CLI failed to start');
+      expect(message).toContain('CODEX_BIN');
+      expect(message).toContain('Binary not found at the resolved path');
     } finally {
       (Bun as any).spawn = originalSpawn;
     }

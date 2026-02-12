@@ -1,4 +1,5 @@
 import { describe, it, expect, mock, beforeEach, afterEach } from 'bun:test';
+import { join } from 'path';
 import { OpenCodeAdapter } from '../../src/adapters/opencode.js';
 
 describe('OpenCodeAdapter', () => {
@@ -388,5 +389,36 @@ describe('OpenCodeAdapter', () => {
     } finally {
       (Bun as any).spawn = originalSpawn;
     }
+  });
+
+  it('should provide helpful diagnostics when spawn fails', async () => {
+    process.env.OPENCODE_BIN = join(process.cwd(), 'tmp', 'missing-opencode-binary');
+    const mockSpawn = mock(() => {
+      const err = new Error('ENOENT: no such file or directory, posix_spawn');
+      (err as any).code = 'ENOENT';
+      throw err;
+    });
+
+    const originalSpawn = Bun.spawn;
+    (Bun as any).spawn = mockSpawn;
+
+    let caught: unknown;
+    try {
+      await adapter.spawn({
+        prompt: 'test',
+        sessionId: 'sess',
+        resume: false,
+      });
+    } catch (error) {
+      caught = error;
+    } finally {
+      (Bun as any).spawn = originalSpawn;
+    }
+
+    expect(caught).toBeInstanceOf(Error);
+    const message = (caught as Error).message;
+    expect(message).toContain('OpenCode CLI failed to start');
+    expect(message).toContain('OPENCODE_BIN');
+    expect(message).toContain('Binary not found at the resolved path');
   });
 });

@@ -4,6 +4,10 @@ import { join } from 'path';
 
 export type BinarySource = 'env' | 'path' | 'candidate' | 'npm';
 
+export function normalizeBinarySource(source?: BinarySource): BinarySource | 'unknown' {
+  return source ?? 'unknown';
+}
+
 export interface ResolveBinaryOptions {
   name: string;
   candidates?: string[];
