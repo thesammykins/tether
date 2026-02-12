@@ -817,18 +817,23 @@ async function start() {
 
     console.log('Starting Tether...\n');
 
+    // Resolve script paths relative to the package root, not process.cwd().
+    // When installed globally or via npx, cwd is the user's project dir where
+    // src/bot.ts doesn't exist. import.meta.dir is bin/, so one level up is root.
+    const packageRoot = dirname(import.meta.dir);
+    const botScript = join(packageRoot, 'src', 'bot.ts');
+    const workerScript = join(packageRoot, 'src', 'worker.ts');
+
     // Start bot
-    const bot = spawn(['bun', 'run', 'src/bot.ts'], {
+    const bot = spawn(['bun', 'run', botScript], {
         stdout: 'inherit',
         stderr: 'inherit',
-        cwd: process.cwd(),
     });
 
     // Start worker
-    const worker = spawn(['bun', 'run', 'src/worker.ts'], {
+    const worker = spawn(['bun', 'run', workerScript], {
         stdout: 'inherit',
         stderr: 'inherit',
-        cwd: process.cwd(),
     });
 
     // Save PIDs
