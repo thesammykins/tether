@@ -40,5 +40,6 @@ export interface ClaudeJob {
     userId: string;
     username: string;
     workingDir?: string;
+    projectName?: string;
     channelContext?: string;
 }

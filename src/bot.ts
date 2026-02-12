@@ -26,7 +26,19 @@ import { existsSync, realpathSync } from 'fs';
 import { homedir } from 'os';
 import { resolve } from 'path';
 import { claudeQueue } from './queue.js';
-import { db, getChannelConfigCached, setChannelConfig } from './db.js';
+import {
+    db,
+    getChannelConfigCached,
+    setChannelConfig,
+    getProject,
+    getDefaultProject,
+    getChannelProject,
+    getThreadProject,
+    setThreadProject,
+    listProjects as dbListProjects,
+} from './db.js';
+import type { Project } from './db.js';
+import { migrateWorkingDirToProject } from './config.js';
 import { startApiServer, buttonHandlers } from './api.js';
 import { checkAllowlist } from './middleware/allowlist.js';
 import { checkRateLimit } from './middleware/rate-limiter.js';
@@ -37,6 +49,14 @@ import { checkSessionLimits } from './features/session-limits.js';
 import { handlePauseResume } from './features/pause-resume.js';
 import { isBrbMessage, isBackMessage, setBrb, setBack } from './features/brb.js';
 import { listSessions, formatAge } from './features/sessions.js';
+import {
+    handleProjectAdd,
+    handleProjectList,
+    handleProjectDefault,
+    handleProjectUse,
+    handleSessionAttach,
+    getRecentSessions,
+} from './features/projects.js';
 import { questionResponses, pendingTypedAnswers } from './api.js';
 
 // DM support - opt-in via env var (disabled by default for security)
@@ -102,6 +122,13 @@ const log = (msg: string) => process.stdout.write(`[bot] ${msg}\n`);
 
 /** Resolve default working directory with existence check. Falls back to cwd. */
 function getDefaultWorkingDir(): string {
+    // Check default project first
+    const defaultProject = getDefaultProject();
+    if (defaultProject && existsSync(defaultProject.path)) {
+        return defaultProject.path;
+    }
+
+    // Fall back to env (deprecated)
     const envDir = process.env.CLAUDE_WORKING_DIR;
     if (envDir && existsSync(envDir)) return envDir;
     if (envDir) log(`WARNING: CLAUDE_WORKING_DIR="${envDir}" does not exist, using cwd`);
@@ -116,13 +143,56 @@ const redactContent = (content: string): string => {
     return `[content:${content.length}chars]`;
 };
 
-// Helper function to resolve working directory from message or channel config
-function resolveWorkingDir(message: string, channelId: string): { workingDir: string; cleanedMessage: string; error?: string } {
-    // Check for [/path] prefix override
-    const pathMatch = message.match(/^\[([^\]]+)\]\s*/);
-    if (pathMatch && pathMatch[1]) {
-        let dir = pathMatch[1];
-        // Expand ~ to home directory
+/** Resolved project context from message + channel */
+interface ResolvedProject {
+    workingDir: string;
+    projectName: string | null;
+    cleanedMessage: string;
+    error?: string;
+}
+
+/**
+ * Resolve project context from a message and channel.
+ *
+ * Resolution order:
+ * 1. [projectName] prefix → look up project by name
+ * 2. [/path] prefix → backward compat with raw path syntax
+ * 3. Channel's linked project (getChannelProject)
+ * 4. Default project (getDefaultProject)
+ * 5. Lazy migration from CLAUDE_WORKING_DIR → then check default again
+ * 6. CLAUDE_WORKING_DIR env (deprecated)
+ * 7. process.cwd() ("bot home" for simple questions)
+ */
+function resolveProject(message: string, channelId: string): ResolvedProject {
+    const bracketMatch = message.match(/^\[([^\]]+)\]\s*/);
+    if (bracketMatch && bracketMatch[1]) {
+        const bracketValue = bracketMatch[1];
+        const cleanedMessage = message.slice(bracketMatch[0].length);
+
+        // 1. Check if it's a project name (not a path)
+        if (!bracketValue.startsWith('/') && !bracketValue.startsWith('~') && !bracketValue.includes('\\')) {
+            const project = getProject(bracketValue);
+            if (project) {
+                if (!existsSync(project.path)) {
+                    return {
+                        workingDir: '',
+                        projectName: null,
+                        cleanedMessage,
+                        error: `Project "${bracketValue}" path not found: \`${project.path}\``,
+                    };
+                }
+                return {
+                    workingDir: project.path,
+                    projectName: project.name,
+                    cleanedMessage,
+                };
+            }
+            // Not a known project name — fall through to path handling
+            // (could be a relative path or typo; let validateWorkingDir handle it)
+        }
+
+        // 2. Backward compat: [/path] prefix
+        let dir = bracketValue;
         if (dir.startsWith('~')) {
             dir = dir.replace('~', homedir());
         }
@@ -130,26 +200,77 @@ function resolveWorkingDir(message: string, channelId: string): { workingDir: st
         if (validationError) {
             return {
                 workingDir: '',
-                cleanedMessage: message.slice(pathMatch[0].length),
-                error: validationError
+                projectName: null,
+                cleanedMessage,
+                error: validationError,
             };
         }
         return {
             workingDir: resolve(dir),
-            cleanedMessage: message.slice(pathMatch[0].length)
+            projectName: null,
+            cleanedMessage,
         };
     }
 
-    // Check channel config (cached)
-    const channelConfig = getChannelConfigCached(channelId);
-    if (channelConfig?.working_dir) {
-        return { workingDir: channelConfig.working_dir, cleanedMessage: message };
+    // 3. Check channel's linked project
+    const channelProject = getChannelProject(channelId);
+    if (channelProject) {
+        if (existsSync(channelProject.path)) {
+            return {
+                workingDir: channelProject.path,
+                projectName: channelProject.name,
+                cleanedMessage: message,
+            };
+        }
+        log(`WARNING: Channel project "${channelProject.name}" path not found: ${channelProject.path}`);
     }
 
-    // Fall back to env or cwd
+    // 4. Check default project
+    const defaultProject = getDefaultProject();
+    if (defaultProject && existsSync(defaultProject.path)) {
+        return {
+            workingDir: defaultProject.path,
+            projectName: defaultProject.name,
+            cleanedMessage: message,
+        };
+    }
+
+    // 5. Lazy migration: CLAUDE_WORKING_DIR → named project
+    migrateWorkingDirToProject();
+    const migratedDefault = getDefaultProject();
+    if (migratedDefault && existsSync(migratedDefault.path)) {
+        return {
+            workingDir: migratedDefault.path,
+            projectName: migratedDefault.name,
+            cleanedMessage: message,
+        };
+    }
+
+    // 6. Fall back to channel config (cached) — legacy behavior
+    const channelConfig = getChannelConfigCached(channelId);
+    if (channelConfig?.working_dir) {
+        return {
+            workingDir: channelConfig.working_dir,
+            projectName: null,
+            cleanedMessage: message,
+        };
+    }
+
+    // 7. Fall back to CLAUDE_WORKING_DIR env (deprecated) or process.cwd()
+    const envDir = process.env.CLAUDE_WORKING_DIR;
+    if (envDir && existsSync(envDir)) {
+        return {
+            workingDir: envDir,
+            projectName: null,
+            cleanedMessage: message,
+        };
+    }
+
+    // 8. Bot home — no project context (simple questions)
     return {
-        workingDir: getDefaultWorkingDir(),
-        cleanedMessage: message
+        workingDir: process.cwd(),
+        projectName: null,
+        cleanedMessage: message,
     };
 }
 
@@ -177,33 +298,95 @@ client.once(Events.ClientReady, async (c) => {
     const cordCommand = existingCommands?.find(cmd => cmd.name === 'cord');
 
     // Always re-register to pick up new subcommands
+    // Note: Discord.js doesn't allow mixing subcommand groups and standalone
+    // subcommands, so we use groups for all logical areas.
     const command = new SlashCommandBuilder()
         .setName('cord')
         .setDescription('Configure Cord bot')
-        .addSubcommand(sub =>
-            sub.setName('config')
-               .setDescription('Configure channel settings')
-               .addStringOption(opt =>
-                   opt.setName('dir')
-                      .setDescription('Working directory for Claude in this channel')
-                      .setRequired(true)
-               )
+        .addSubcommandGroup(group =>
+            group.setName('config')
+                .setDescription('Bot configuration')
+                .addSubcommand(sub =>
+                    sub.setName('dir')
+                       .setDescription('Set working directory for Claude in this channel')
+                       .addStringOption(opt =>
+                           opt.setName('path')
+                              .setDescription('Working directory path')
+                              .setRequired(true)
+                       )
+                )
         )
-        .addSubcommand(sub =>
-            sub.setName('sessions')
-               .setDescription('List resumable Claude Code sessions')
-               .addStringOption(opt =>
-                   opt.setName('dir')
-                      .setDescription('Project directory to list sessions for (defaults to channel config)')
-                      .setRequired(false)
-               )
-               .addIntegerOption(opt =>
-                   opt.setName('limit')
-                      .setDescription('Max sessions to show (default 5)')
-                      .setRequired(false)
-                      .setMinValue(1)
-                      .setMaxValue(25)
-               )
+        .addSubcommandGroup(group =>
+            group.setName('session')
+                .setDescription('Session management')
+                .addSubcommand(sub =>
+                    sub.setName('list')
+                       .setDescription('List resumable Claude Code sessions')
+                       .addStringOption(opt =>
+                           opt.setName('dir')
+                              .setDescription('Project directory to list sessions for (defaults to channel config)')
+                              .setRequired(false)
+                       )
+                       .addIntegerOption(opt =>
+                           opt.setName('limit')
+                              .setDescription('Max sessions to show (default 5)')
+                              .setRequired(false)
+                              .setMinValue(1)
+                              .setMaxValue(25)
+                       )
+                )
+                .addSubcommand(sub =>
+                    sub.setName('attach')
+                       .setDescription('Attach to an existing session in a new thread')
+                       .addStringOption(opt =>
+                           opt.setName('session')
+                              .setDescription('Session ID to attach to')
+                              .setRequired(true)
+                              .setAutocomplete(true)
+                       )
+                )
+        )
+        .addSubcommandGroup(group =>
+            group.setName('project')
+                .setDescription('Project management')
+                .addSubcommand(sub =>
+                    sub.setName('add')
+                       .setDescription('Register a new project')
+                       .addStringOption(opt =>
+                           opt.setName('name')
+                              .setDescription('Short project name (e.g. my-app)')
+                              .setRequired(true)
+                       )
+                       .addStringOption(opt =>
+                           opt.setName('path')
+                              .setDescription('Absolute path to project directory')
+                              .setRequired(true)
+                       )
+                )
+                .addSubcommand(sub =>
+                    sub.setName('list')
+                       .setDescription('List all registered projects')
+                )
+                .addSubcommand(sub =>
+                    sub.setName('default')
+                       .setDescription('Set a project as the global default')
+                       .addStringOption(opt =>
+                           opt.setName('name')
+                              .setDescription('Project name')
+                              .setRequired(true)
+                              .setAutocomplete(true)
+                       )
+                )
+                .addSubcommand(sub =>
+                    sub.setName('use')
+                       .setDescription('Set this channel\'s default project')
+                       .addStringOption(opt =>
+                           opt.setName('name')
+                              .setDescription('Project name')
+                              .setRequired(true)
+                              .setAutocomplete(true)
+                       )
+                )
         );
 
     if (!cordCommand) {
@@ -220,13 +403,40 @@ client.once(Events.ClientReady, async (c) => {
     startApiServer(client, apiPort);
 });
 
-// Handle slash command and button interactions
+// Handle slash command, autocomplete, and button interactions
 client.on(Events.InteractionCreate, async (interaction: Interaction) => {
-    // Handle /cord slash command
+    // ── Autocomplete handler ──────────────────────────────────────────────
+    if (interaction.isAutocomplete() && interaction.commandName === 'cord') {
+        const focused = interaction.options.getFocused(true);
+
+        if (focused.name === 'name') {
+            // Autocomplete project names
+            const projects = dbListProjects();
+            const filtered = projects
+                .filter(p => p.name.toLowerCase().includes(focused.value.toLowerCase()))
+                .slice(0, 25);
+            await interaction.respond(
+                filtered.map(p => ({ name: `${p.name} (${p.path})`, value: p.name })),
+            );
+        }
+
+        if (focused.name === 'session') {
+            // Autocomplete session IDs from threads table
+            const choices = getRecentSessions(focused.value);
+            await interaction.respond(choices);
+        }
+
+        return;
+    }
+
+    // ── Slash command handler ─────────────────────────────────────────────
     if (interaction.isChatInputCommand() && interaction.commandName === 'cord') {
+        const group = interaction.options.getSubcommandGroup();
         const subcommand = interaction.options.getSubcommand();
-        if (subcommand === 'config') {
-            let dir = interaction.options.getString('dir', true);
+
+        // /cord config dir
+        if (group === 'config' && subcommand === 'dir') {
+            let dir = interaction.options.getString('path', true);
 
             // Expand ~ to home directory
             if (dir.startsWith('~')) {
@@ -238,7 +448,7 @@ client.on(Events.InteractionCreate, async (interaction: Interaction) => {
             if (validationError) {
                 await interaction.reply({
                     content: validationError,
-                    ephemeral: true
+                    ephemeral: true,
                 });
                 return;
             }
@@ -249,12 +459,13 @@ client.on(Events.InteractionCreate, async (interaction: Interaction) => {
             setChannelConfig(interaction.channelId, dir);
             await interaction.reply({
                 content: `Working directory set to \`${dir}\` for this channel.`,
-                ephemeral: true
+                ephemeral: true,
             });
             log(`Channel ${interaction.channelId} configured with working dir: ${dir}`);
         }
 
-        if (subcommand === 'sessions') {
+        // /cord session list (was: /cord sessions)
+        if (group === 'session' && subcommand === 'list') {
             // Resolve project directory: explicit option > channel config > env > cwd
             let projectDir = interaction.options.getString('dir');
             if (projectDir) {
@@ -294,6 +505,82 @@ client.on(Events.InteractionCreate, async (interaction: Interaction) => {
             });
             log(`Listed ${sessions.length} sessions for ${projectDir}`);
         }
+
+        // /cord session attach
+        if (group === 'session' && subcommand === 'attach') {
+            const sessionId = interaction.options.getString('session', true);
+            const result = handleSessionAttach(sessionId);
+
+            if (!result.success || !result.session) {
+                await interaction.reply({ content: result.message, ephemeral: true });
+                return;
+            }
+
+            // Create a new thread for the attached session
+            try {
+                const channel = interaction.channel;
+                if (!channel || !('send' in channel)) {
+                    await interaction.reply({ content: 'Cannot create thread in this channel.', ephemeral: true });
+                    return;
+                }
+
+                const statusMessage = await (channel as TextChannel).send(
+                    `Attaching to session \`${result.session.session_id.slice(0, 8)}...\``,
+                );
+                const thread = await statusMessage.startThread({
+                    name: `Session ${result.session.session_id.slice(0, 8)}`,
+                    autoArchiveDuration: ThreadAutoArchiveDuration.OneDay,
+                });
+
+                // Store the new thread → existing session mapping
+                const workingDir = result.session.working_dir || getDefaultWorkingDir();
+                db.run(
+                    'INSERT INTO threads (thread_id, session_id, working_dir) VALUES (?, ?, ?)',
+                    [thread.id, result.session.session_id, workingDir],
+                );
+
+                await interaction.reply({
+                    content: `Attached to session \`${result.session.session_id.slice(0, 8)}...\` in <#${thread.id}>`,
+                    ephemeral: true,
+                });
+                log(`Attached session ${result.session.session_id} to new thread ${thread.id}`);
+            } catch (error) {
+                log(`Failed to attach session: ${error}`);
+                await interaction.reply({ content: 'Failed to create thread for session.', ephemeral: true });
+            }
+        }
+
+        // /cord project add
+        if (group === 'project' && subcommand === 'add') {
+            const name = interaction.options.getString('name', true);
+            let path = interaction.options.getString('path', true);
+            if (path.startsWith('~')) {
+                path = path.replace('~', homedir());
+            }
+            const result = handleProjectAdd(name, path);
+            await interaction.reply({ content: result.message, ephemeral: true });
+        }
+
+        // /cord project list
+        if (group === 'project' && subcommand === 'list') {
+            const { formatted } = handleProjectList();
+            await interaction.reply({ content: formatted, ephemeral: true });
+        }
+
+        // /cord project default
+        if (group === 'project' && subcommand === 'default') {
+            const name = interaction.options.getString('name', true);
+            const result = handleProjectDefault(name);
+            await interaction.reply({ content: result.message, ephemeral: true });
+        }
+
+        // /cord project use
+        if (group === 'project' && subcommand === 'use') {
+            const name = interaction.options.getString('name', true);
+            const result = handleProjectUse(interaction.channelId, name);
+            await interaction.reply({ content: result.message, ephemeral: !result.success });
+        }
+
         return;
     }
 
@@ -428,8 +715,10 @@ client.on(Events.MessageCreate, async (message: Message) => {
                 return;
             }
 
-            // Resume existing session
-            const workingDir = mapping.working_dir ||
+            // Resume existing session — prefer thread project, then stored working_dir
+            const threadProject = getThreadProject(dmChannelId);
+            const workingDir = threadProject?.path ||
+                mapping.working_dir ||
                 getDefaultWorkingDir();
 
             await claudeQueue.add('process', {
@@ -440,14 +729,15 @@ client.on(Events.MessageCreate, async (message: Message) => {
                 userId: message.author.id,
                 username: message.author.tag,
                 workingDir,
+                projectName: threadProject?.name,
             });
         } else {
             // New DM session
             const sessionId = crypto.randomUUID();
-            const { workingDir, cleanedMessage, error: workingDirError } = resolveWorkingDir(content, dmChannelId);
+            const { workingDir, projectName, cleanedMessage, error: projectError } = resolveProject(content, dmChannelId);
 
-            if (workingDirError) {
-                await message.reply(workingDirError);
+            if (projectError) {
+                await message.reply(projectError);
                 return;
             }
 
@@ -457,7 +747,12 @@ client.on(Events.MessageCreate, async (message: Message) => {
                 [dmChannelId, sessionId, workingDir]
             );
 
-            log(`New DM session ${sessionId} for ${message.author.tag}`);
+            // Link thread to project if resolved
+            if (projectName) {
+                setThreadProject(dmChannelId, projectName);
+            }
+
+            log(`New DM session ${sessionId} for ${message.author.tag}${projectName ? ` [project: ${projectName}]` : ''}`);
 
             await claudeQueue.add('process', {
                 prompt: cleanedMessage,
@@ -467,6 +762,7 @@ client.on(Events.MessageCreate, async (message: Message) => {
                 userId: message.author.id,
                 username: message.author.tag,
                 workingDir,
+                projectName: projectName ?? undefined,
             });
         }
 
@@ -481,6 +777,41 @@ client.on(Events.MessageCreate, async (message: Message) => {
     // Middleware: Check rate limits
     if (!checkRateLimit(message.author.id)) {
         await message.reply('⏳ Rate limit exceeded. Please wait a moment before trying again.');
+        return;
+    }
+
+    // =========================================================================
+    // TEXT COMMANDS: !project add/list/default/use
+    // =========================================================================
+    if (message.content.startsWith('!project')) {
+        const args = message.content.slice('!project'.length).trim().split(/\s+/);
+        const subCmd = args[0];
+
+        if (subCmd === 'add' && args[1] && args[2]) {
+            let path = args.slice(2).join(' ');
+            if (path.startsWith('~')) {
+                path = path.replace('~', homedir());
+            }
+            const result = handleProjectAdd(args[1], path);
+            await message.reply(result.message);
+        } else if (subCmd === 'list') {
+            const { formatted } = handleProjectList();
+            await message.reply(formatted);
+        } else if (subCmd === 'default' && args[1]) {
+            const result = handleProjectDefault(args[1]);
+            await message.reply(result.message);
+        } else if (subCmd === 'use' && args[1]) {
+            const result = handleProjectUse(message.channel.id, args[1]);
+            await message.reply(result.message);
+        } else {
+            await message.reply(
+                '**Usage:**\n' +
+                '`!project add <name> <path>` — Register a project\n' +
+                '`!project list` — List projects\n' +
+                '`!project default <name>` — Set global default\n' +
+                '`!project use <name>` — Set channel default',
+            );
+        }
         return;
     }
 
@@ -503,7 +834,10 @@ client.on(Events.MessageCreate, async (message: Message) => {
                 .get(threadId) as { session_id: string; working_dir: string | null } | null;
             
             if (mapping) {
-                const workingDir = mapping.working_dir ||
+                // Resolve working dir: thread project > stored working_dir > channel config > default
+                const threadProject = getThreadProject(threadId);
+                const workingDir = threadProject?.path ||
+                    mapping.working_dir ||
                     getChannelConfigCached(message.channel.isThread() ? message.channel.parentId || '' : '')?.working_dir ||
                     getDefaultWorkingDir();
                 
@@ -594,8 +928,10 @@ client.on(Events.MessageCreate, async (message: Message) => {
         // Show typing indicator
         await thread.sendTyping();
 
-        // Use stored working dir or fall back to channel config / env / cwd
-        const workingDir = mapping.working_dir ||
+        // Resolve working dir: thread project > stored working_dir > channel config > default
+        const threadProject = getThreadProject(thread.id);
+        const workingDir = threadProject?.path ||
+            mapping.working_dir ||
             getChannelConfigCached(thread.parentId || '')?.working_dir ||
             getDefaultWorkingDir();
 
@@ -608,6 +944,7 @@ client.on(Events.MessageCreate, async (message: Message) => {
             userId: message.author.id,
             username: message.author.tag,
             workingDir,
+            projectName: threadProject?.name,
         });
 
         return;
@@ -618,19 +955,19 @@ client.on(Events.MessageCreate, async (message: Message) => {
     // =========================================================================
     if (!isMentioned) return;
 
-    // Extract message content and resolve working directory
+    // Extract message content and resolve project context
     const rawText = message.content.replace(/<@!?\d+>/g, '').trim();
     log(`New mention from ${message.author.tag}: ${redactContent(rawText)}`);
     
-    const { workingDir, cleanedMessage, error: workingDirError } = resolveWorkingDir(rawText, message.channelId);
+    const { workingDir, projectName, cleanedMessage, error: projectError } = resolveProject(rawText, message.channelId);
 
-    // If path override validation failed, reply with error
-    if (workingDirError) {
-        await message.reply(workingDirError);
+    // If project/path resolution failed, reply with error
+    if (projectError) {
+        await message.reply(projectError);
         return;
     }
 
-    log(`Working directory: ${workingDir}`);
+    log(`Working directory: ${workingDir}${projectName ? ` [project: ${projectName}]` : ''}`);
 
     // Post status message in channel, then create thread from it
     // This allows us to update the status message later (Processing... → Done)
@@ -712,7 +1049,12 @@ client.on(Events.MessageCreate, async (message: Message) => {
         [thread.id, sessionId, workingDir]
     );
 
-    log(`Created thread ${thread.id} with session ${sessionId}`);
+    // Link thread to project if resolved
+    if (projectName) {
+        setThreadProject(thread.id, projectName);
+    }
+
+    log(`Created thread ${thread.id} with session ${sessionId}${projectName ? ` [project: ${projectName}]` : ''}`);
 
     // Show typing indicator
     await thread.sendTyping();
@@ -726,6 +1068,7 @@ client.on(Events.MessageCreate, async (message: Message) => {
         userId: message.author.id,
         username: message.author.tag,
         workingDir,
+        projectName: projectName ?? undefined,
         channelContext,
     });
 });

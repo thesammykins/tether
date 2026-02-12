@@ -13,14 +13,18 @@ import { existsSync } from 'fs';
 import { getAdapter } from './adapters/registry.js';
 import { sendToThread } from './discord.js';
 import { isAway } from './features/brb.js';
-import { updateSessionId } from './db.js';
+import { updateSessionId, getProject, getDefaultProject } from './db.js';
 import type { ClaudeJob } from './queue.js';
 import { debugLog, debugBlock } from './debug.js';
 
 const log = (msg: string) => process.stdout.write(`[worker] ${msg}\n`);
 
-/** Resolve default working directory with existence check. Falls back to cwd. */
+/** Resolve default working directory: default project > env > cwd. */
 function getDefaultWorkingDir(): string {
+    const defaultProject = getDefaultProject();
+    if (defaultProject && existsSync(defaultProject.path)) {
+        return defaultProject.path;
+    }
     const envDir = process.env.CLAUDE_WORKING_DIR;
     if (envDir && existsSync(envDir)) return envDir;
     if (envDir) log(`WARNING: CLAUDE_WORKING_DIR="${envDir}" does not exist, using cwd`);
@@ -36,9 +40,23 @@ const connection = new IORedis({
 const worker = new Worker<ClaudeJob>(
     'claude',
     async (job: Job<ClaudeJob>) => {
-        const { prompt, threadId, sessionId, resume, username, workingDir, channelContext } = job.data;
+        const { prompt, threadId, sessionId, resume, username, workingDir: jobWorkingDir, projectName, channelContext } = job.data;
 
-        log(`Processing job ${job.id} for ${username}`);
+        // Resolve working directory: project DB > job workingDir > default
+        let workingDir = jobWorkingDir;
+        if (projectName) {
+            const project = getProject(projectName);
+            if (project && existsSync(project.path)) {
+                workingDir = project.path;
+            } else if (project) {
+                log(`WARNING: Project "${projectName}" path not found: ${project.path}, using job workingDir`);
+            }
+        }
+        if (!workingDir) {
+            workingDir = getDefaultWorkingDir();
+        }
+
+        log(`Processing job ${job.id} for ${username}${projectName ? ` [project: ${projectName}]` : ''}`);
         log(`Session: ${sessionId}, Resume: ${resume}`);
 
         // Debug: Log full job details
