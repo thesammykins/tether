@@ -1,4 +1,5 @@
 import type { AgentAdapter, SpawnOptions, SpawnResult } from './types.js';
+import { getHomeCandidate, getSystemBinaryCandidates, resolveBinary, resolveNpmGlobalBinary } from './resolve-binary.js';
 
 /**
  * OpenCode CLI Adapter
@@ -12,13 +13,58 @@ import type { AgentAdapter, SpawnOptions, SpawnResult } from './types.js';
  * - `--cwd <path>`: Set working directory
  */
 
+// Cache resolved binary path
+let cachedBinaryPath: string | null = null;
+
 export class OpenCodeAdapter implements AgentAdapter {
   readonly name = 'opencode';
+
+  private async getBinaryPath(): Promise<string> {
+    const envValue = process.env.OPENCODE_BIN;
+    if (envValue) {
+      if (cachedBinaryPath !== envValue) {
+        cachedBinaryPath = envValue;
+        console.log(`[opencode] Binary resolved (env): ${envValue}`);
+      }
+      return cachedBinaryPath;
+    }
+
+    if (cachedBinaryPath) {
+      return cachedBinaryPath;
+    }
+
+    const resolved = await resolveBinary({
+      name: 'opencode',
+      candidates: [
+        ...getSystemBinaryCandidates('opencode'),
+        getHomeCandidate('.opencode', 'bin', 'opencode'),
+      ],
+      windowsCandidates: [getHomeCandidate('.opencode', 'bin', 'opencode.exe')],
+    });
+
+    if (resolved) {
+      cachedBinaryPath = resolved.path;
+      console.log(`[opencode] Binary resolved (${resolved.source}): ${resolved.path}`);
+      return cachedBinaryPath;
+    }
+
+    const npmBinary = await resolveNpmGlobalBinary('opencode');
+    if (npmBinary) {
+      cachedBinaryPath = npmBinary;
+      console.log(`[opencode] Binary resolved (npm): ${npmBinary}`);
+      return cachedBinaryPath;
+    }
+
+    throw new Error(
+      'OpenCode CLI not found. Install it or set OPENCODE_BIN to the binary path.'
+    );
+  }
 
   async spawn(options: SpawnOptions): Promise<SpawnResult> {
     const { prompt, sessionId, resume, workingDir } = options;
 
-    const args = ['opencode', 'run'];
+    const binaryPath = await this.getBinaryPath();
+    const args = [binaryPath, 'run'];
 
     // Format as JSON for structured output
     args.push('--format', 'json');
