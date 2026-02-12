@@ -1,4 +1,5 @@
 import type { AgentAdapter, SpawnOptions, SpawnResult } from './types.js';
+import { getHomeCandidate, getSystemBinaryCandidates, resolveBinary, resolveNpmGlobalBinary } from './resolve-binary.js';
 
 /**
  * Codex CLI Adapter
@@ -11,13 +12,58 @@ import type { AgentAdapter, SpawnOptions, SpawnResult } from './types.js';
  * - `--json`: Structured output
  */
 
+// Cache resolved binary path
+let cachedBinaryPath: string | null = null;
+
 export class CodexAdapter implements AgentAdapter {
   readonly name = 'codex';
+
+  private async getBinaryPath(): Promise<string> {
+    const envValue = process.env.CODEX_BIN;
+    if (envValue) {
+      if (cachedBinaryPath !== envValue) {
+        cachedBinaryPath = envValue;
+        console.log(`[codex] Binary resolved (env): ${envValue}`);
+      }
+      return cachedBinaryPath;
+    }
+
+    if (cachedBinaryPath) {
+      return cachedBinaryPath;
+    }
+
+    const resolved = await resolveBinary({
+      name: 'codex',
+      candidates: [
+        ...getSystemBinaryCandidates('codex'),
+        getHomeCandidate('.codex', 'bin', 'codex'),
+      ],
+      windowsCandidates: [getHomeCandidate('.codex', 'bin', 'codex.exe')],
+    });
+
+    if (resolved) {
+      cachedBinaryPath = resolved.path;
+      console.log(`[codex] Binary resolved (${resolved.source}): ${resolved.path}`);
+      return cachedBinaryPath;
+    }
+
+    const npmBinary = await resolveNpmGlobalBinary('codex');
+    if (npmBinary) {
+      cachedBinaryPath = npmBinary;
+      console.log(`[codex] Binary resolved (npm): ${npmBinary}`);
+      return cachedBinaryPath;
+    }
+
+    throw new Error(
+      'Codex CLI not found. Install it or set CODEX_BIN to the binary path.'
+    );
+  }
 
   async spawn(options: SpawnOptions): Promise<SpawnResult> {
     const { prompt, sessionId, resume, workingDir } = options;
 
-    const args = ['codex', 'exec'];
+    const binaryPath = await this.getBinaryPath();
+    const args = [binaryPath, 'exec'];
 
     // Session handling
     if (resume) {
