@@ -1,11 +1,15 @@
 import { describe, it, expect, mock, beforeEach, afterEach } from 'bun:test';
 import { join } from 'path';
-import { CodexAdapter } from '../../src/adapters/codex.js';
+import { CodexAdapter, _resetBinaryCache } from '../../src/adapters/codex.js';
+
+// Use a path that exists on ALL platforms (macOS, Linux CI) for which mock results
+const REAL_BIN_PATH = process.execPath;
 
 describe('CodexAdapter', () => {
   let adapter: CodexAdapter;
 
   beforeEach(() => {
+    _resetBinaryCache();
     adapter = new CodexAdapter();
   });
 
@@ -23,7 +27,7 @@ describe('CodexAdapter', () => {
         return {
           stdout: {
             [Symbol.asyncIterator]: async function* () {
-              yield new TextEncoder().encode('/usr/local/bin/codex\n');
+              yield new TextEncoder().encode(REAL_BIN_PATH + '\n');
             },
           },
           stderr: {
@@ -61,7 +65,7 @@ describe('CodexAdapter', () => {
         Array.isArray(call[0]) && call[0].includes('exec')
       ) ?? [[]];
 
-      expect(args[0]).toContain('codex');
+      expect(args[0]).toBe(REAL_BIN_PATH);
       expect(args).toContain('exec');
       expect(args).toContain('--json');
       expect(args).toContain('test prompt');
@@ -77,7 +81,7 @@ describe('CodexAdapter', () => {
         return {
           stdout: {
             [Symbol.asyncIterator]: async function* () {
-              yield new TextEncoder().encode('/usr/local/bin/codex\n');
+              yield new TextEncoder().encode(REAL_BIN_PATH + '\n');
             },
           },
           stderr: {
@@ -114,7 +118,7 @@ describe('CodexAdapter', () => {
         Array.isArray(call[0]) && call[0].includes('exec')
       ) ?? [[]];
 
-      expect(args[0]).toContain('codex');
+      expect(args[0]).toBe(REAL_BIN_PATH);
       expect(args).toContain('exec');
       expect(args).toContain('resume');
       expect(args).toContain('existing-session');
@@ -130,7 +134,7 @@ describe('CodexAdapter', () => {
         return {
           stdout: {
             [Symbol.asyncIterator]: async function* () {
-              yield new TextEncoder().encode('/usr/local/bin/codex\n');
+              yield new TextEncoder().encode(REAL_BIN_PATH + '\n');
             },
           },
           stderr: {
@@ -179,7 +183,7 @@ describe('CodexAdapter', () => {
         return {
           stdout: {
             [Symbol.asyncIterator]: async function* () {
-              yield new TextEncoder().encode('/usr/local/bin/codex\n');
+              yield new TextEncoder().encode(REAL_BIN_PATH + '\n');
             },
           },
           stderr: {
@@ -258,7 +262,7 @@ describe('CodexAdapter', () => {
         return {
           stdout: {
             [Symbol.asyncIterator]: async function* () {
-              yield new TextEncoder().encode('/usr/local/bin/codex\n');
+              yield new TextEncoder().encode(REAL_BIN_PATH + '\n');
             },
           },
           stderr: {
@@ -306,7 +310,7 @@ describe('CodexAdapter', () => {
         return {
           stdout: {
             [Symbol.asyncIterator]: async function* () {
-              yield new TextEncoder().encode('/usr/local/bin/codex\n');
+              yield new TextEncoder().encode(REAL_BIN_PATH + '\n');
             },
           },
           stderr: {
@@ -354,7 +358,7 @@ describe('CodexAdapter', () => {
         return {
           stdout: {
             [Symbol.asyncIterator]: async function* () {
-              yield new TextEncoder().encode('/usr/local/bin/codex\n');
+              yield new TextEncoder().encode(REAL_BIN_PATH + '\n');
             },
           },
           stderr: {
@@ -399,7 +403,7 @@ describe('CodexAdapter', () => {
         return {
           stdout: {
             [Symbol.asyncIterator]: async function* () {
-              yield new TextEncoder().encode('/usr/local/bin/codex\n');
+              yield new TextEncoder().encode(REAL_BIN_PATH + '\n');
             },
           },
           stderr: {
@@ -477,7 +481,7 @@ describe('CodexAdapter', () => {
         return {
           stdout: {
             [Symbol.asyncIterator]: async function* () {
-              yield new TextEncoder().encode('/usr/local/bin/codex\n');
+              yield new TextEncoder().encode(REAL_BIN_PATH + '\n');
             },
           },
           stderr: {

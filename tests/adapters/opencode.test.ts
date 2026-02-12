@@ -1,11 +1,15 @@
 import { describe, it, expect, mock, beforeEach, afterEach } from 'bun:test';
 import { join } from 'path';
-import { OpenCodeAdapter } from '../../src/adapters/opencode.js';
+import { OpenCodeAdapter, _resetBinaryCache } from '../../src/adapters/opencode.js';
+
+// Use a path that exists on ALL platforms (macOS, Linux CI) for which mock results
+const REAL_BIN_PATH = process.execPath;
 
 describe('OpenCodeAdapter', () => {
   let adapter: OpenCodeAdapter;
 
   beforeEach(() => {
+    _resetBinaryCache();
     adapter = new OpenCodeAdapter();
   });
 
@@ -23,7 +27,7 @@ describe('OpenCodeAdapter', () => {
         return {
           stdout: {
             [Symbol.asyncIterator]: async function* () {
-              yield new TextEncoder().encode('/usr/local/bin/opencode\n');
+              yield new TextEncoder().encode(REAL_BIN_PATH + '\n');
             },
           },
           stderr: {
@@ -61,7 +65,7 @@ describe('OpenCodeAdapter', () => {
         Array.isArray(call[0]) && call[0].includes('run')
       ) ?? [[]];
 
-      expect(args[0]).toContain('opencode');
+      expect(args[0]).toBe(REAL_BIN_PATH);
       expect(args).toContain('run');
       expect(args).toContain('--format');
       expect(args).toContain('json');
@@ -78,7 +82,7 @@ describe('OpenCodeAdapter', () => {
         return {
           stdout: {
             [Symbol.asyncIterator]: async function* () {
-              yield new TextEncoder().encode('/usr/local/bin/opencode\n');
+              yield new TextEncoder().encode(REAL_BIN_PATH + '\n');
             },
           },
           stderr: {
@@ -128,7 +132,7 @@ describe('OpenCodeAdapter', () => {
         return {
           stdout: {
             [Symbol.asyncIterator]: async function* () {
-              yield new TextEncoder().encode('/usr/local/bin/opencode\n');
+              yield new TextEncoder().encode(REAL_BIN_PATH + '\n');
             },
           },
           stderr: {
@@ -180,7 +184,7 @@ describe('OpenCodeAdapter', () => {
         return {
           stdout: {
             [Symbol.asyncIterator]: async function* () {
-              yield new TextEncoder().encode('/usr/local/bin/opencode\n');
+              yield new TextEncoder().encode(REAL_BIN_PATH + '\n');
             },
           },
           stderr: {
@@ -259,7 +263,7 @@ describe('OpenCodeAdapter', () => {
         return {
           stdout: {
             [Symbol.asyncIterator]: async function* () {
-              yield new TextEncoder().encode('/usr/local/bin/opencode\n');
+              yield new TextEncoder().encode(REAL_BIN_PATH + '\n');
             },
           },
           stderr: {
@@ -307,7 +311,7 @@ describe('OpenCodeAdapter', () => {
         return {
           stdout: {
             [Symbol.asyncIterator]: async function* () {
-              yield new TextEncoder().encode('/usr/local/bin/opencode\n');
+              yield new TextEncoder().encode(REAL_BIN_PATH + '\n');
             },
           },
           stderr: {
@@ -352,7 +356,7 @@ describe('OpenCodeAdapter', () => {
         return {
           stdout: {
             [Symbol.asyncIterator]: async function* () {
-              yield new TextEncoder().encode('/usr/local/bin/opencode\n');
+              yield new TextEncoder().encode(REAL_BIN_PATH + '\n');
             },
           },
           stderr: {
@@ -428,7 +432,7 @@ describe('OpenCodeAdapter', () => {
         return {
           stdout: {
             [Symbol.asyncIterator]: async function* () {
-              yield new TextEncoder().encode('/usr/local/bin/opencode\n');
+              yield new TextEncoder().encode(REAL_BIN_PATH + '\n');
             },
           },
           stderr: {

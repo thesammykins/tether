@@ -20,6 +20,12 @@ import { debugLog, debugBlock } from '../debug.js';
 let cachedBinaryPath: string | null = null;
 let cachedBinarySource: BinarySource | 'unknown' = 'unknown';
 
+/** Reset cached binary path (for testing only) */
+export function _resetBinaryCache(): void {
+  cachedBinaryPath = null;
+  cachedBinarySource = 'unknown';
+}
+
 export class OpenCodeAdapter implements AgentAdapter {
   readonly name = 'opencode';
 
