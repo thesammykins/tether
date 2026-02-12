@@ -8,6 +8,7 @@
  *   tether status  - Show running status
  *   tether health  - Check Distether connection
  *   tether setup   - Interactive setup wizard
+ *   tether config  - Manage configuration and encrypted secrets
  *
  * Distether Commands:
  *   tether send <channel> "message"
@@ -36,6 +37,12 @@ import { join, dirname } from 'path';
 import * as readline from 'readline';
 import { homedir } from 'os';
 import { randomUUID } from 'crypto';
+import {
+    ensureConfigDir, readPreferences, writePreference, readSecrets, writeSecret,
+    deleteKey as deleteConfigKey, resolve as resolveConfig, resolveAll,
+    isKnownKey, isSecret, getKeyMeta, getKnownKeys, hasSecrets, hasConfig,
+    importDotEnv, CONFIG_PATHS,
+} from '../src/config';
 
 const PID_FILE = join(process.cwd(), '.tether.pid');
 const API_BASE = process.env.TETHER_API_URL || 'http://localhost:2643';
@@ -919,6 +926,236 @@ async function health() {
     }
 }
 
+// ============ Config ============
+
+async function promptPassword(label = 'Password: '): Promise<string> {
+    // Use raw mode to hide password input
+    if (process.stdin.isTTY) {
+        process.stdout.write(label);
+        return new Promise((resolve) => {
+            let pw = '';
+            process.stdin.setRawMode(true);
+            process.stdin.resume();
+            process.stdin.setEncoding('utf-8');
+            process.stdin.on('data', (ch: string) => {
+                if (ch === '\r' || ch === '\n') {
+                    process.stdin.setRawMode(false);
+                    process.stdin.pause();
+                    process.stdout.write('\n');
+                    resolve(pw);
+                } else if (ch === '\x03') {
+                    process.exit(130);
+                } else if (ch === '\x7f' || ch === '\b') {
+                    pw = pw.slice(0, -1);
+                } else {
+                    pw += ch;
+                }
+            });
+        });
+    }
+    return prompt(label);
+}
+
+async function configCommand() {
+    const subcommand = args[0];
+
+    switch (subcommand) {
+        case 'set': {
+            const key = args[1];
+            if (!key) {
+                console.error('Usage: tether config set <key> [value]');
+                process.exit(1);
+            }
+            if (!isKnownKey(key)) {
+                console.error(`Unknown config key: ${key}`);
+                console.error(`Run "tether config list" to see all keys`);
+                process.exit(1);
+            }
+
+            let value = args[2];
+            if (isSecret(key)) {
+                if (!value) {
+                    value = await promptPassword(`${key}: `);
+                }
+                const pw = await promptPassword('Encryption password: ');
+                if (!pw) {
+                    console.error('Password cannot be empty');
+                    process.exit(1);
+                }
+                writeSecret(key, value, pw);
+                console.log(`✔ Secret "${key}" saved (encrypted)`);
+            } else {
+                if (value === undefined) {
+                    console.error(`Usage: tether config set ${key} <value>`);
+                    process.exit(1);
+                }
+                writePreference(key, value);
+                console.log(`✔ "${key}" = "${value}"`);
+            }
+            break;
+        }
+
+        case 'get': {
+            const key = args[1];
+            if (!key) {
+                console.error('Usage: tether config get <key>');
+                process.exit(1);
+            }
+            if (!isKnownKey(key)) {
+                console.error(`Unknown config key: ${key}`);
+                process.exit(1);
+            }
+
+            let password: string | undefined;
+            if (isSecret(key) && hasSecrets()) {
+                password = await promptPassword('Encryption password: ');
+            }
+
+            const value = resolveConfig(key, password);
+            const meta = getKeyMeta(key);
+
+            // Show source
+            const envValue = process.env[key];
+            let source = 'default';
+            if (envValue !== undefined && envValue !== '') {
+                source = 'env';
+            } else if (isSecret(key) && password) {
+                try {
+                    const secrets = readSecrets(password);
+                    if (key in secrets) source = 'secrets.enc';
+                } catch { /* wrong password */ }
+            } else {
+                const prefs = readPreferences();
+                if (key in prefs) source = 'config.toml';
+            }
+
+            console.log(`${key} = ${value || '(empty)'}`);
+            console.log(`  source: ${source}  section: [${meta?.section}]`);
+            if (meta?.description) console.log(`  ${meta.description}`);
+            break;
+        }
+
+        case 'list': {
+            const keys = getKnownKeys();
+            const prefs = readPreferences();
+
+            console.log('\nTether Configuration\n');
+            let currentSection = '';
+
+            for (const key of keys) {
+                const meta = getKeyMeta(key)!;
+                if (meta.section !== currentSection) {
+                    currentSection = meta.section;
+                    console.log(`[${currentSection}]`);
+                }
+
+                // Determine value & source
+                const envValue = process.env[key];
+                let value: string;
+                let source: string;
+
+                if (envValue !== undefined && envValue !== '') {
+                    value = isSecret(key) ? '***' : envValue;
+                    source = 'env';
+                } else if (isSecret(key)) {
+                    value = hasSecrets() ? '(encrypted)' : '(not set)';
+                    source = hasSecrets() ? 'secrets.enc' : 'default';
+                } else if (key in prefs) {
+                    value = prefs[key]!;
+                    source = 'config.toml';
+                } else {
+                    value = meta.default || '(not set)';
+                    source = 'default';
+                }
+
+                const pad = ' '.repeat(Math.max(1, 28 - key.length));
+                console.log(`  ${key}${pad}${value}  (${source})`);
+            }
+            console.log('');
+            break;
+        }
+
+        case 'delete':
+        case 'unset': {
+            const key = args[1];
+            if (!key) {
+                console.error('Usage: tether config delete <key>');
+                process.exit(1);
+            }
+            if (!isKnownKey(key)) {
+                console.error(`Unknown config key: ${key}`);
+                process.exit(1);
+            }
+
+            let password: string | undefined;
+            if (isSecret(key)) {
+                password = await promptPassword('Encryption password: ');
+            }
+
+            const deleted = deleteConfigKey(key, password);
+            if (deleted) {
+                console.log(`✔ "${key}" deleted`);
+            } else {
+                console.log(`"${key}" was not set`);
+            }
+            break;
+        }
+
+        case 'import': {
+            const envPath = args[1] || join(process.cwd(), '.env');
+            if (!existsSync(envPath)) {
+                console.error(`File not found: ${envPath}`);
+                process.exit(1);
+            }
+
+            const pw = await promptPassword('Encryption password (for secrets): ');
+            if (!pw) {
+                console.error('Password cannot be empty');
+                process.exit(1);
+            }
+
+            const result = importDotEnv(envPath, pw);
+            console.log(`\n✔ Imported ${result.imported.length} keys:`);
+            for (const k of result.imported) {
+                console.log(`  ${k}${isSecret(k) ? ' (encrypted)' : ''}`);
+            }
+            if (result.skipped.length > 0) {
+                console.log(`\n⚠ Skipped ${result.skipped.length} keys:`);
+                for (const k of result.skipped) {
+                    console.log(`  ${k}${isKnownKey(k) ? ' (empty/placeholder)' : ' (unknown)'}`);
+                }
+            }
+            console.log('');
+            break;
+        }
+
+        case 'path': {
+            console.log(`Config dir:    ${CONFIG_PATHS.CONFIG_DIR}`);
+            console.log(`Preferences:   ${CONFIG_PATHS.CONFIG_PATH}  ${hasConfig() ? '✔' : '(not created)'}`);
+            console.log(`Secrets:       ${CONFIG_PATHS.SECRETS_PATH}  ${hasSecrets() ? '✔' : '(not created)'}`);
+            break;
+        }
+
+        default:
+            console.log(`
+Usage: tether config <subcommand>
+
+Subcommands:
+  set <key> [value]    Set a config value (prompts for secrets)
+  get <key>            Get a resolved config value
+  list                 List all config values with sources
+  delete <key>         Delete a config value
+  import [path]        Import from .env file (default: ./.env)
+  path                 Show config file locations
+`);
+            if (subcommand) {
+                console.error(`Unknown config subcommand: ${subcommand}`);
+                process.exit(1);
+            }
+            break;
+    }
+}
+
 function showHelp() {
     console.log(`
 Tether - Distether to Claude Code bridge
@@ -931,6 +1168,7 @@ Management Commands:
   status             Show running status
   health             Check Distether connection
   setup              Interactive setup wizard
+  config             Manage configuration and encrypted secrets
   help               Show this help
 
 Distether Commands:
@@ -1001,20 +1239,32 @@ DM Commands (proactive outreach):
   dm <user-id> --embed "description" [options]
       Send an embed DM (same options as embed command)
 
-  dm <user-id> --file <filepath> ["message"]
-      Send a file attachment via DM
+   dm <user-id> --file <filepath> ["message"]
+       Send a file attachment via DM
+
+Config Commands:
+   config set <key> [value]     Set a config value (prompts for secrets)
+   config get <key>             Get a resolved config value with source
+   config list                  List all config values with sources
+   config delete <key>          Delete a config value
+   config import [path]         Import from .env file (default: ./.env)
+   config path                  Show config file locations
 
 Examples:
-  tether send 123456789 "Hello world!"
-  tether embed 123456789 "Status update" --title "Daily Report" --color green --field "Tasks:5 done:inline"
-  tether buttons 123456789 "Approve?" --button label="Yes" id="approve" style="success" reply="Approved!"
-  tether ask 123456789 "Deploy to prod?" --option "Yes" --option "No" --timeout 600
-  tether file 123456789 ./report.md "Here's the report"
-  tether state 123456789 1234567890 processing
+   tether send 123456789 "Hello world!"
+   tether embed 123456789 "Status update" --title "Daily Report" --color green --field "Tasks:5 done:inline"
+   tether buttons 123456789 "Approve?" --button label="Yes" id="approve" style="success" reply="Approved!"
+   tether ask 123456789 "Deploy to prod?" --option "Yes" --option "No" --timeout 600
+   tether file 123456789 ./report.md "Here's the report"
+   tether state 123456789 1234567890 processing
    tether state 123456789 1234567890 done
-  tether dm 987654321 "Hey, I need your approval on this PR"
-  tether dm 987654321 --embed "Build passed" --title "CI Update" --color green
-  tether dm 987654321 --file ./report.md "Here's the report"
+   tether dm 987654321 "Hey, I need your approval on this PR"
+   tether dm 987654321 --embed "Build passed" --title "CI Update" --color green
+   tether dm 987654321 --file ./report.md "Here's the report"
+   tether config set AGENT_TYPE opencode
+   tether config set DISCORD_BOT_TOKEN
+   tether config import .env
+   tether config list
 `);
 }
 
@@ -1086,6 +1336,9 @@ switch (command) {
         break;
     case 'dm':
         sendDM();
+        break;
+    case 'config':
+        configCommand();
         break;
 
     default:
