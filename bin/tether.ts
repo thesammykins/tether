@@ -104,7 +104,7 @@ async function apiCall(endpoint: string, body: any): Promise<any> {
             headers: buildApiHeaders(),
             body: JSON.stringify(body),
         });
-        const data = await response.json();
+        const data = await response.json() as Record<string, unknown>;
         if (!response.ok || data.error) {
             console.error('Error:', data.error || 'Request failed');
             process.exit(1);
@@ -156,7 +156,7 @@ async function sendEmbed() {
         } else if (arg === '--url' && args[i + 1]) {
             embed.url = args[++i];
         } else if (arg === '--color' && args[i + 1]) {
-            const colorArg = args[++i].toLowerCase();
+            const colorArg = args[++i]!.toLowerCase();
             embed.color = COLORS[colorArg] || parseInt(colorArg.replace('0x', ''), 16) || 0;
         } else if (arg === '--author' && args[i + 1]) {
             embed.author = embed.author || {};
@@ -180,7 +180,7 @@ async function sendEmbed() {
         } else if (arg === '--timestamp') {
             embed.timestamp = new Date().toISOString();
         } else if (arg === '--field' && args[i + 1]) {
-            const fieldStr = args[++i];
+            const fieldStr = args[++i]!;
             const parts = fieldStr.split(':');
             if (parts.length >= 2) {
                 fields.push({
@@ -189,7 +189,7 @@ async function sendEmbed() {
                     inline: parts[2]?.toLowerCase() === 'inline',
                 });
             }
-        } else if (!arg.startsWith('--')) {
+        } else if (arg && !arg.startsWith('--')) {
             description = arg;
         }
         i++;
@@ -249,14 +249,14 @@ async function sendButtons() {
             // Collect all following key=value pairs until next flag or end
             const button: any = {};
             i++;
-            while (i < args.length && !args[i].startsWith('--')) {
-                const kvMatch = args[i].match(/^(\w+)=(.*)$/);
+            while (i < args.length && !args[i]!.startsWith('--')) {
+                const kvMatch = args[i]!.match(/^(\w+)=(.*)$/);
                 if (kvMatch) {
                     const [, key, value] = kvMatch;
                     if (key === 'style') {
-                        button.style = BUTTON_STYLES[value.toLowerCase()] || 1;
+                        button.style = BUTTON_STYLES[value!.toLowerCase()] || 1;
                     } else {
-                        button[key] = value;
+                        button[key!] = value;
                     }
                 }
                 i++;
@@ -283,7 +283,7 @@ async function sendButtons() {
                 buttons.push(apiButton);
             }
             continue; // Don't increment i again
-        } else if (!arg.startsWith('--')) {
+        } else if (arg && !arg.startsWith('--')) {
             promptText = arg;
         }
         i++;
@@ -319,10 +319,10 @@ async function askQuestion() {
     while (i < args.length) {
         const arg = args[i];
         if (arg === '--option' && args[i + 1]) {
-            options.push(args[i + 1]);
+            options.push(args[i + 1]!);
             i += 2;
         } else if (arg === '--timeout' && args[i + 1]) {
-            timeout = parseInt(args[i + 1], 10);
+            timeout = parseInt(args[i + 1]!, 10);
             if (isNaN(timeout) || timeout <= 0) {
                 console.error('Error: --timeout must be a positive number');
                 process.exit(1);
@@ -584,12 +584,12 @@ async function sendDM() {
             if (arg === '--title' && subArgs[i + 1]) {
                 embed.title = subArgs[++i];
             } else if (arg === '--color' && subArgs[i + 1]) {
-                const colorArg = subArgs[++i].toLowerCase();
+                const colorArg = subArgs[++i]!.toLowerCase();
                 embed.color = COLORS[colorArg] || parseInt(colorArg.replace('0x', ''), 16) || 0;
             } else if (arg === '--footer' && subArgs[i + 1]) {
                 embed.footer = { text: subArgs[++i] };
             } else if (arg === '--field' && subArgs[i + 1]) {
-                const fieldStr = subArgs[++i];
+                const fieldStr = subArgs[++i]!;
                 const parts = fieldStr.split(':');
                 if (parts.length >= 2) {
                     fields.push({
@@ -600,7 +600,7 @@ async function sendDM() {
                 }
             } else if (arg === '--timestamp') {
                 embed.timestamp = new Date().toISOString();
-            } else if (!arg.startsWith('--')) {
+            } else if (arg && !arg.startsWith('--')) {
                 description = arg;
             }
             i++;

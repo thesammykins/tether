@@ -87,8 +87,8 @@ describe('pause-resume', () => {
     // Check that message was held
     const held = getHeldMessages(threadId);
     expect(held.length).toBe(1);
-    expect(held[0].author_id).toBe('user-2');
-    expect(held[0].content).toBe('hello world');
+    expect(held[0]!.author_id).toBe('user-2');
+    expect(held[0]!.content).toBe('hello world');
   });
 
   test('getHeldMessages returns and clears held messages', () => {
@@ -103,9 +103,9 @@ describe('pause-resume', () => {
     // Get held messages
     const held = getHeldMessages(threadId);
     expect(held.length).toBe(3);
-    expect(held[0].content).toBe('message 1');
-    expect(held[1].content).toBe('message 2');
-    expect(held[2].content).toBe('message 3');
+    expect(held[0]!.content).toBe('message 1');
+    expect(held[1]!.content).toBe('message 2');
+    expect(held[2]!.content).toBe('message 3');
     
     // Verify they were cleared
     const heldAgain = getHeldMessages(threadId);
@@ -149,8 +149,8 @@ describe('pause-resume', () => {
     const keywords = ['pause', 'stop', 'hold'];
     
     keywords.forEach((keyword, i) => {
-      handlePauseResume(mockMessage(keyword, threadIds[i]));
-      expect(isThreadPausedExport(threadIds[i])).toBe(true);
+      handlePauseResume(mockMessage(keyword, threadIds[i]!));
+      expect(isThreadPausedExport(threadIds[i]!)).toBe(true);
     });
   });
 
@@ -192,12 +192,12 @@ describe('pause-resume', () => {
     expect(result.heldMessages).toBeDefined();
     const messages = result.heldMessages;
     if (messages && messages.length >= 3) {
-      expect(messages[0].content).toBe('first message');
-      expect(messages[0].author_id).toBe('user-2');
-      expect(messages[1].content).toBe('second message');
-      expect(messages[1].author_id).toBe('user-3');
-      expect(messages[2].content).toBe('third message');
-      expect(messages[2].author_id).toBe('user-2');
+      expect(messages[0]!.content).toBe('first message');
+      expect(messages[0]!.author_id).toBe('user-2');
+      expect(messages[1]!.content).toBe('second message');
+      expect(messages[1]!.author_id).toBe('user-3');
+      expect(messages[2]!.content).toBe('third message');
+      expect(messages[2]!.author_id).toBe('user-2');
     }
   });
 

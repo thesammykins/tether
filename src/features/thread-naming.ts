@@ -11,7 +11,7 @@ export function generateThreadName(content: string): string {
   name = name.replace(/[*_~`#]/g, '');
   
   // Use first line only
-  const firstLine = name.split('\n')[0].trim();
+  const firstLine = (name.split('\n')[0] ?? name).trim();
   name = firstLine || name;
   
   // If short enough, return as-is
